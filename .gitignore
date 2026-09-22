@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+sample.cbz
+*.cbz
+.venv/
+venv/
