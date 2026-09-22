@@ -1,5 +1,7 @@
 # Mogura
 
+![logo](logo.png "Mogura")
+
 A desktop editor for [mokuro](https://github.com/kha-white/mokuro) files built with Python + tkinter.
 
 ## Features (current)
