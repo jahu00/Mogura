@@ -285,15 +285,27 @@ class PageView(tk.Frame):
         return self._edit_mode
 
     def _handle_at(self, cx: float, cy: float) -> Optional[str]:
-        """Return the name of the handle near (cx, cy), or None."""
+        """Return the name of the handle near (cx, cy), or None.
+
+        Hit regions of neighbouring handles can overlap (the hit tolerance is
+        larger than the gap between a corner and an adjacent edge handle), so
+        pick the handle whose centre is closest to the point rather than the
+        first one that matches.
+        """
+        best_name: Optional[str] = None
+        best_dist = None
         for name, item_id in self._handle_ids.items():
             hx1, hy1, hx2, hy2 = self.canvas.coords(item_id)
             if (
                 hx1 - self.HANDLE_HIT <= cx <= hx2 + self.HANDLE_HIT
                 and hy1 - self.HANDLE_HIT <= cy <= hy2 + self.HANDLE_HIT
             ):
-                return name
-        return None
+                mx, my = (hx1 + hx2) / 2, (hy1 + hy2) / 2
+                dist = (cx - mx) ** 2 + (cy - my) ** 2
+                if best_dist is None or dist < best_dist:
+                    best_dist = dist
+                    best_name = name
+        return best_name
 
     def _on_edit_press(self, event) -> bool:
         """Handle a press in edit mode. Returns True if it was consumed."""
