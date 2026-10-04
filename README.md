@@ -28,6 +28,7 @@ A desktop editor for [mokuro](https://github.com/kha-white/mokuro) files built w
 
 - Python 3.9+
 - Pillow
+- tkinterdnd2 (optional, enables drag-and-drop; the app runs without it)
 
 ```bash
 pip install -r requirements.txt
@@ -53,6 +54,9 @@ or
 - **Open CBZ**: File menu → *Open CBZ...* (or Ctrl+O), or the toolbar button.
 - **Open Folder**: File menu → *Open Folder...* (or Ctrl+Shift+O), or the
   toolbar button. Loads all images in the selected directory as pages.
+- **Drag and drop**: drop a `.cbz` file onto the central page area to open it,
+  or drop a `.mokuro` file (with images already open) to load its text.
+  Requires `tkinterdnd2`.
 - **Open Mokuro**: File menu → *Open Mokuro...* (or Ctrl+M), or the toolbar
   button. Loads the OCR text for the volume; open the matching CBZ or image
   folder to see each page's text blocks in the "Text" panel.

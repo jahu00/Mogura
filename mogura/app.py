@@ -19,8 +19,19 @@ from .page_view import PageView
 from .settings import Settings
 from .text_panel import TextPanel
 
+# Optional drag-and-drop support via tkinterdnd2. If unavailable, the app runs
+# normally without the drop feature.
+try:
+    from tkinterdnd2 import DND_FILES, TkinterDnD
 
-class MoguraApp(tk.Tk):
+    _TkBase = TkinterDnD.Tk
+    _DND_AVAILABLE = True
+except Exception:  # noqa: BLE001 - any import/runtime issue disables DnD
+    _TkBase = tk.Tk
+    _DND_AVAILABLE = False
+
+
+class MoguraApp(_TkBase):
     """Top-level window: menu, toolbar, collapsible side panels, page view."""
 
     def __init__(self):
@@ -50,8 +61,82 @@ class MoguraApp(tk.Tk):
         self._build_menu()
         self._build_toolbar()
         self._build_body()
+        self._setup_drag_and_drop()
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    # ----------------------------------------------------------- drag & drop
+    def _setup_drag_and_drop(self) -> None:
+        """Register the central page area as a file drop target (if DnD is
+        available). Dropping a CBZ or mokuro file opens it."""
+        if not _DND_AVAILABLE:
+            return
+        try:
+            for widget in (self._center, self._center.canvas):
+                widget.drop_target_register(DND_FILES)
+                widget.dnd_bind("<<Drop>>", self._on_file_drop)
+        except Exception:  # noqa: BLE001 - don't let DnD setup break startup
+            pass
+
+    def _on_file_drop(self, event) -> None:
+        paths = self._parse_drop_paths(event.data)
+        if not paths:
+            return
+        self._open_dropped_file(paths[0])
+
+    @staticmethod
+    def _parse_drop_paths(data: str):
+        """Parse the platform drop string into a list of file paths.
+
+        tkdnd joins multiple paths with spaces and wraps paths containing
+        spaces in braces, e.g. ``{/a b/x.cbz} /c/y.mokuro``.
+        """
+        paths = []
+        i = 0
+        n = len(data)
+        while i < n:
+            if data[i] == " ":
+                i += 1
+                continue
+            if data[i] == "{":
+                j = data.find("}", i + 1)
+                if j == -1:
+                    paths.append(data[i + 1:])
+                    break
+                paths.append(data[i + 1:j])
+                i = j + 1
+            else:
+                j = data.find(" ", i)
+                if j == -1:
+                    paths.append(data[i:])
+                    break
+                paths.append(data[i:j])
+                i = j
+        return paths
+
+    def _open_dropped_file(self, path: str) -> None:
+        """Open a dropped file by type (CBZ opens images, .mokuro opens text)."""
+        lower = path.lower()
+        if lower.endswith(".cbz"):
+            if not self._maybe_save_changes():
+                return
+            self._remember_dir(path)
+            self._load_source(lambda: CbzArchive(path), path, "Open CBZ")
+        elif lower.endswith(".mokuro"):
+            if self._archive is None:
+                messagebox.showinfo(
+                    "Open images first",
+                    "Open a CBZ or image folder before dropping a mokuro file.",
+                )
+                return
+            if not self._maybe_save_changes():
+                return
+            self._remember_dir(path)
+            self._load_mokuro(path)
+        else:
+            self._status.config(
+                text=f"Unsupported file dropped: {os.path.basename(path)}"
+            )
 
     # ------------------------------------------------------------------ menu
     def _build_menu(self) -> None:
