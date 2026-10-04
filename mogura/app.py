@@ -13,11 +13,13 @@ from .edit_dialog import EditBlockDialog
 from .find_dialog import FindDialog
 from .split_dialog import SplitDialog
 from .icons import get_icon
+from . import ocr
 from .mokuro import MokuroData
 from .page_list import PageList
 from .page_source import FolderSource, PageSource
 from .page_view import PageView
 from .settings import Settings
+from .settings_dialog import SettingsDialog
 from .text_panel import TextPanel
 
 # Optional drag-and-drop support via tkinterdnd2. If unavailable, the app runs
@@ -42,6 +44,8 @@ class MoguraApp(_TkBase):
         self.minsize(700, 500)
 
         self._settings = Settings()
+        # Apply the saved OCR method to the dispatcher before any OCR runs.
+        ocr.set_method(self._settings.get("ocr_method"))
 
         self._archive: Optional[PageSource] = None
         self._mokuro: Optional[MokuroData] = None
@@ -223,6 +227,10 @@ class MoguraApp(_TkBase):
             variable=self._auto_create_var,
             command=self._on_auto_create_toggle,
         )
+        settings_menu.add_separator()
+        settings_menu.add_command(
+            label="Options...", command=self.open_settings
+        )
         menubar.add_cascade(label="Settings", menu=settings_menu)
 
         self.config(menu=menubar)
@@ -392,6 +400,11 @@ class MoguraApp(_TkBase):
 
     def _on_auto_create_toggle(self) -> None:
         self._settings.set("auto_create_mokuro", self._auto_create_var.get())
+
+    def open_settings(self) -> None:
+        """Open the settings window (sections list + per-section options)."""
+        dialog = SettingsDialog(self, self._settings)
+        self.wait_window(dialog)
 
     # ----------------------------------------------------------- bounding box
     def toggle_boxes(self) -> None:

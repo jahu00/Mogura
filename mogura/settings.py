@@ -22,6 +22,8 @@ _DEFAULTS: Dict[str, Any] = {
     "auto_create_mokuro": True,
     # Directory of the most recently opened file, used to seed file dialogs.
     "last_dir": "",
+    # Which OCR backend to use. Only "RapidOCR" exists for now.
+    "ocr_method": "RapidOCR",
 }
 
 
