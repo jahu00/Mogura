@@ -157,8 +157,18 @@ class EditBlockDialog(tk.Toplevel):
         )
         self._text = tk.Text(editors, height=5, width=40, wrap=tk.NONE)
         self._text.insert("1.0", "\n".join(self._block.lines))
-        self._text.pack(fill=tk.X, pady=(0, 6))
+        self._text.pack(fill=tk.X, pady=(0, 2))
         self._text.bind("<KeyRelease>", lambda _e: self._refresh_preview())
+
+        # Quick-insert buttons for common special characters.
+        specials = tk.Frame(editors)
+        specials.pack(fill=tk.X, pady=(0, 6))
+        tk.Label(specials, text="Insert:").pack(side=tk.LEFT)
+        for ch in ("ー", "…", "⁉", "⁇"):
+            tk.Button(
+                specials, text=ch, width=2,
+                command=lambda c=ch: self._insert_special(c),
+            ).pack(side=tk.LEFT, padx=1)
 
         # Orientation.
         orient = tk.Frame(editors)
@@ -182,6 +192,12 @@ class EditBlockDialog(tk.Toplevel):
             entry = tk.Spinbox(boxf, from_=0, to=100000, width=6, textvariable=var)
             entry.pack(side=tk.LEFT)
             var.trace_add("write", lambda *_a: self._refresh_preview())
+
+    def _insert_special(self, char: str) -> None:
+        """Insert ``char`` at the text cursor and refresh the preview."""
+        self._text.insert(tk.INSERT, char)
+        self._text.focus_set()
+        self._refresh_preview()
 
     # --------------------------------------------------------------- buttons
     def _build_buttons(self) -> None:

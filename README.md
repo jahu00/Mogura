@@ -93,6 +93,7 @@ or
   shows the original image region beside an approximate render of the stored
   text (side by side for vertical text, stacked for horizontal). There you can
   edit the text, switch orientation, and enter exact bounding box coordinates.
+  Quick-insert buttons add common special characters (ー … ⁉ ⁇) at the cursor.
 - **Combine text items**: tick the checkbox on two or more items, then press the
   combine button in the Text panel toolbar. A dialog shows each source (original
   with its render overlaid in red), lets you correct the merged text and pick an
