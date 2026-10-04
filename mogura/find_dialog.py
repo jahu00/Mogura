@@ -23,8 +23,7 @@ from __future__ import annotations
 import tkinter as tk
 from typing import Optional
 
-# Characters offered by the "Insert" drop-down (mirrors the edit dialog).
-_SPECIAL_CHARS = ("ー", "…", "⁉", "⁇", "！", "？", "〜", "♥")
+from .special_chars import SpecialCharButton
 
 
 class FindDialog(tk.Toplevel):
@@ -129,27 +128,21 @@ class FindDialog(tk.Toplevel):
         self._search_entry.focus_set()
 
     def _build_special_menu(self, parent) -> None:
-        """Create the 'Insert special character' drop-down button."""
-        self._insert_btn = tk.Menubutton(
-            parent, text="Insert ▾", relief=tk.RAISED
-        )
-        menu = tk.Menu(self._insert_btn, tearoff=0)
-        for ch in _SPECIAL_CHARS:
-            menu.add_command(
-                label=ch, command=lambda c=ch: self._insert_special(c)
-            )
-        self._insert_btn.config(menu=menu)
+        """Create the 'Insert special character' drop-down button.
+
+        The target is resolved on demand so the character lands in whichever
+        input (search or replace) last had focus.
+        """
+        self._insert_btn = SpecialCharButton(parent, target=self._insert_target)
         self._insert_btn.pack(side=tk.LEFT, padx=(4, 0))
 
     # --------------------------------------------------------------- helpers
     def _on_entry_focus(self, event) -> None:
         self._last_entry = event.widget
 
-    def _insert_special(self, char: str) -> None:
-        """Insert ``char`` into whichever input last had focus."""
-        entry = self._last_entry or self._search_entry
-        entry.insert(tk.INSERT, char)
-        entry.focus_set()
+    def _insert_target(self) -> tk.Entry:
+        """Return the input that should receive an inserted character."""
+        return self._last_entry or self._search_entry
 
     def _set_status(self, message: str) -> None:
         self._status.config(text=message)

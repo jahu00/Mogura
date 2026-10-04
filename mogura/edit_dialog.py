@@ -20,6 +20,7 @@ from typing import Optional
 from PIL import Image, ImageTk
 
 from .mokuro import TextBlock
+from .special_chars import SpecialCharButton
 from .text_render import render_text
 
 # Size of the comparison preview panes (px).
@@ -160,15 +161,13 @@ class EditBlockDialog(tk.Toplevel):
         self._text.pack(fill=tk.X, pady=(0, 2))
         self._text.bind("<KeyRelease>", lambda _e: self._refresh_preview())
 
-        # Quick-insert buttons for common special characters.
+        # Quick-insert drop-down for common special characters.
         specials = tk.Frame(editors)
         specials.pack(fill=tk.X, pady=(0, 6))
         tk.Label(specials, text="Insert:").pack(side=tk.LEFT)
-        for ch in ("ー", "…", "⁉", "⁇"):
-            tk.Button(
-                specials, text=ch, width=2,
-                command=lambda c=ch: self._insert_special(c),
-            ).pack(side=tk.LEFT, padx=1)
+        SpecialCharButton(
+            specials, target=self._text, on_insert=self._refresh_preview
+        ).pack(side=tk.LEFT, padx=1)
 
         # Orientation.
         orient = tk.Frame(editors)
@@ -192,12 +191,6 @@ class EditBlockDialog(tk.Toplevel):
             entry = tk.Spinbox(boxf, from_=0, to=100000, width=6, textvariable=var)
             entry.pack(side=tk.LEFT)
             var.trace_add("write", lambda *_a: self._refresh_preview())
-
-    def _insert_special(self, char: str) -> None:
-        """Insert ``char`` at the text cursor and refresh the preview."""
-        self._text.insert(tk.INSERT, char)
-        self._text.focus_set()
-        self._refresh_preview()
 
     # --------------------------------------------------------------- buttons
     def _build_buttons(self) -> None:
