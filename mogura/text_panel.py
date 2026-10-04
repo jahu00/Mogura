@@ -361,7 +361,19 @@ class TextPanel(tk.Frame):
         self.update_idletasks()
         row = self._rows[index]
         inner_height = self._inner.winfo_height() or 1
-        self.canvas.yview_moveto(max(0.0, row.winfo_y() / inner_height))
+        row_top = row.winfo_y()
+        row_bottom = row_top + row.winfo_height()
+
+        view_top = self.canvas.canvasy(0)
+        view_bottom = view_top + self.canvas.winfo_height()
+
+        # Leave the view alone if the row is already fully visible; only
+        # scroll the minimum needed to reveal a partially/fully hidden row.
+        if row_top < view_top:
+            self.canvas.yview_moveto(max(0.0, row_top / inner_height))
+        elif row_bottom > view_bottom:
+            new_top = row_bottom - self.canvas.winfo_height()
+            self.canvas.yview_moveto(max(0.0, new_top / inner_height))
 
     # ------------------------------------------------------------ block edits
     def _rerender(self, select: Optional[int]) -> None:
