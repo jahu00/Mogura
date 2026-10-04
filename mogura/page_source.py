@@ -38,6 +38,10 @@ class PageSource:
         """Load and decode the page at ``index`` as a PIL image."""
         raise NotImplementedError
 
+    def read_raw(self, index: int) -> bytes:
+        """Return the raw, undecoded bytes of the page file at ``index``."""
+        raise NotImplementedError
+
     def load_thumbnail(self, index: int, size: int = 160) -> Image.Image:
         """Load a page and shrink it to fit within a ``size`` px box."""
         image = self.load_image(index)
@@ -102,3 +106,8 @@ class FolderSource(PageSource):
         image = Image.open(full_path)
         image.load()
         return image
+
+    def read_raw(self, index: int) -> bytes:
+        full_path = os.path.join(self.path, self._names[index])
+        with open(full_path, "rb") as handle:
+            return handle.read()

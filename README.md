@@ -6,8 +6,9 @@ A desktop editor for [mokuro](https://github.com/kha-white/mokuro) files built w
 
 ## Features (current)
 
-- Top menu: open a CBZ file, open a folder of images, open/save a mokuro file,
-  toggle panels, persistent settings, exit
+- Top menu: open a CBZ file (optionally with an embedded mokuro), open a folder
+  of images, open/save a mokuro file, export a CBZ with mokuro embedded, toggle
+  panels, persistent settings, exit
 - Toolbar: quick access to open CBZ and panel toggles
 - Left panel: scrollable page thumbnails for navigation; the current page is
   highlighted (collapsible). Each thumbnail shows its resolution (top-right
@@ -109,8 +110,16 @@ or
   the two pieces.
 - **Save**: File menu → *Save Mokuro* (Ctrl+S) or the toolbar save button
   writes to the current mokuro file; *Save Mokuro As...* (Ctrl+Shift+S) prompts
-  for a new path. Unsaved changes are marked with a `*` in the window title, and
-  Mogura prompts to save (Yes/No/Cancel) before opening another file or exiting.
+  for a new path. If the mokuro was loaded from inside a CBZ (see below), Save
+  writes it back into that CBZ instead. Unsaved changes are marked with a `*` in
+  the window title, and Mogura prompts to save (Yes/No/Cancel) before opening
+  another file or exiting.
+- **Embedded mokuro**: a CBZ may contain its own `.mokuro` file. When present,
+  Mogura loads that automatically (in preference to a sibling file).
+- **Export**: File menu → *Export CBZ with Mokuro...* writes a new CBZ
+  containing the current page images together with the mokuro data embedded
+  inside it. PNG and JPEG pages are copied without recompression; other formats
+  are re-encoded to JPEG for compatibility.
 - **Toggle panels**: View menu or toolbar buttons (drag the sashes to resize).
 
 ## Development helper

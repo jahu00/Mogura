@@ -33,6 +33,9 @@ class MoguraApp(tk.Tk):
 
         self._archive: Optional[PageSource] = None
         self._mokuro: Optional[MokuroData] = None
+        # True when the loaded mokuro came from inside the current CBZ, so
+        # saving writes it back into the archive.
+        self._mokuro_in_cbz: bool = False
         # Whether the loaded mokuro data has unsaved changes.
         self._dirty: bool = False
         self._current_page: int = -1
@@ -72,6 +75,9 @@ class MoguraApp(tk.Tk):
             label="Save Mokuro As...",
             command=self.save_mokuro_as,
             accelerator="Ctrl+Shift+S",
+        )
+        file_menu.add_command(
+            label="Export CBZ with Mokuro...", command=self.export_cbz
         )
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self._on_close)
@@ -376,6 +382,8 @@ class MoguraApp(tk.Tk):
                 messagebox.showerror("Failed to open Mokuro", str(exc))
             return False
         self._mokuro = mokuro
+        # Loaded from a standalone file, not from inside the CBZ.
+        self._mokuro_in_cbz = False
         self._set_dirty(False)
         # Refresh the current page so its text appears.
         if self._current_page >= 0:
@@ -389,12 +397,32 @@ class MoguraApp(tk.Tk):
 
     # ------------------------------------------------------------------ save
     def save_mokuro(self) -> bool:
-        """Save to the current mokuro path, prompting if none is set."""
+        """Save the mokuro data.
+
+        If it was loaded from inside the current CBZ, write it back into the
+        archive. Otherwise write to its file path (prompting if none is set).
+        """
         if self._mokuro is None:
             return False
+        if self._mokuro_in_cbz:
+            return self._write_mokuro_to_cbz(self._archive)
         if not self._mokuro.path:
             return self.save_mokuro_as()
         return self._write_mokuro(self._mokuro.path)
+
+    def _write_mokuro_to_cbz(self, archive) -> bool:
+        """Write the current mokuro back into ``archive`` (a CbzArchive)."""
+        if not isinstance(archive, CbzArchive):
+            return False
+        self._text_panel.commit_pending()
+        try:
+            archive.write_mokuro(self._mokuro.to_json())
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Failed to save into CBZ", str(exc))
+            return False
+        self._set_dirty(False)
+        self._status.config(text=f"Saved mokuro into {os.path.basename(archive.path)}")
+        return True
 
     def save_mokuro_as(self) -> bool:
         """Prompt for a path and save the mokuro data there."""
@@ -434,6 +462,73 @@ class MoguraApp(tk.Tk):
         self._set_dirty(False)
         self._status.config(text=f"Saved: {path}")
         return True
+
+    # ----------------------------------------------------------------- export
+    def export_cbz(self) -> bool:
+        """Export a new CBZ containing the current pages and the mokuro file."""
+        if self._archive is None or self._mokuro is None:
+            messagebox.showinfo(
+                "Nothing to export",
+                "Open images and mokuro text data before exporting.",
+            )
+            return False
+        suggested = ""
+        if self._source_path:
+            root, _ext = os.path.splitext(self._source_path.rstrip("/"))
+            suggested = os.path.basename(root) + ".cbz"
+        path = filedialog.asksaveasfilename(
+            title="Export CBZ with Mokuro",
+            defaultextension=".cbz",
+            filetypes=[("Comic Book Archive", "*.cbz"), ("All files", "*.*")],
+            initialfile=suggested,
+            initialdir=self._initial_dir(),
+        )
+        if not path:
+            return False
+        self._text_panel.commit_pending()
+        try:
+            self._export_cbz_to(path)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Failed to export CBZ", str(exc))
+            return False
+        self._remember_dir(path)
+        self._status.config(text=f"Exported: {path}")
+        return True
+
+    def _export_cbz_to(self, path: str) -> None:
+        """Write a CBZ with every current page image plus the mokuro file.
+
+        Images are never modified by the app, so their original bytes are
+        copied verbatim when they are already PNG or JPEG. Other formats are
+        re-encoded to JPEG for broad compatibility.
+        """
+        import io
+        import os as _os
+        import zipfile
+
+        mokuro_name = self._default_export_mokuro_name()
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as out:
+            for i in range(self._archive.page_count):
+                name = self._archive.page_name(i)
+                ext = _os.path.splitext(name)[1].lower()
+                if ext in (".png", ".jpg", ".jpeg"):
+                    # Copy original bytes without recompression.
+                    out.writestr(name, self._archive.read_raw(i))
+                else:
+                    # Re-encode uncommon formats to JPEG for compatibility.
+                    image = self._archive.load_image(i).convert("RGB")
+                    buf = io.BytesIO()
+                    image.save(buf, format="JPEG", quality=95)
+                    new_name = _os.path.splitext(name)[0] + ".jpg"
+                    out.writestr(new_name, buf.getvalue())
+            out.writestr(mokuro_name, self._mokuro.to_json().encode("utf-8"))
+
+    def _default_export_mokuro_name(self) -> str:
+        if self._source_path:
+            base = os.path.splitext(os.path.basename(self._source_path.rstrip("/")))[0]
+        else:
+            base = "mokuro"
+        return base + ".mokuro"
 
     # ----------------------------------------------------------- dirty state
     def _mark_dirty(self) -> None:
@@ -510,6 +605,7 @@ class MoguraApp(tk.Tk):
         self._source_path = path
         # A new source invalidates any previously loaded text.
         self._mokuro = None
+        self._mokuro_in_cbz = False
         self._set_dirty(False)
 
         self._status.config(text="Loading thumbnails...")
@@ -519,7 +615,33 @@ class MoguraApp(tk.Tk):
         self._refresh_title()
         self.show_page(0)
 
-        self._maybe_auto_load_mokuro(path)
+        # A mokuro embedded in the CBZ takes precedence; otherwise try a
+        # sibling file if auto-load is enabled.
+        if not self._load_embedded_mokuro():
+            self._maybe_auto_load_mokuro(path)
+
+    def _load_embedded_mokuro(self) -> bool:
+        """Load a mokuro embedded in the current CBZ, if present."""
+        archive = self._archive
+        if not isinstance(archive, CbzArchive) or not archive.has_mokuro:
+            return False
+        try:
+            text = archive.read_mokuro()
+            mokuro = MokuroData.from_json(text, path="")
+        except Exception as exc:  # noqa: BLE001
+            self._status.config(text=f"Embedded mokuro could not be read: {exc}")
+            return False
+        self._mokuro = mokuro
+        self._mokuro_in_cbz = True
+        self._set_dirty(False)
+        if self._current_page >= 0:
+            self._update_text_for_page(self._current_page)
+        self._update_text_counts()
+        self._status.config(
+            text=f"Loaded embedded mokuro from CBZ "
+            f"({len(mokuro.pages)} pages)"
+        )
+        return True
 
     def _maybe_auto_load_mokuro(self, source_path: str) -> None:
         """Auto-load a sibling mokuro file if the setting is enabled."""

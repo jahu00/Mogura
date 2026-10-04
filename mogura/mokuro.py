@@ -180,9 +180,21 @@ class MokuroData:
             raise ValueError("Not a valid mokuro file (no 'pages').")
         return cls(path, raw)
 
+    @classmethod
+    def from_json(cls, text: str, path: str = "") -> "MokuroData":
+        """Parse mokuro data from a JSON string (e.g. read from a CBZ)."""
+        raw = json.loads(text)
+        if "pages" not in raw:
+            raise ValueError("Not a valid mokuro file (no 'pages').")
+        return cls(path, raw)
+
+    def to_json(self) -> str:
+        """Serialize the (possibly edited) data to a JSON string."""
+        self._raw["pages"] = [p.to_dict() for p in self.pages]
+        return json.dumps(self._raw, ensure_ascii=False)
+
     def save(self, path: str | None = None) -> None:
         """Serialize back to a ``.mokuro`` file."""
         target = path or self.path
-        self._raw["pages"] = [p.to_dict() for p in self.pages]
         with open(target, "w", encoding="utf-8") as handle:
-            json.dump(self._raw, handle, ensure_ascii=False)
+            handle.write(self.to_json())
