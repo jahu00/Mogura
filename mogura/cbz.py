@@ -58,6 +58,15 @@ class CbzArchive(PageSource):
         """Return the raw, undecoded bytes of the page at ``index``."""
         return self._zip.read(self._names[index])
 
+    def delete_page(self, index: int) -> None:
+        """Drop the page at ``index`` from the in-memory page list.
+
+        The CBZ file on disk is left untouched; the page is only removed from
+        the ordered list of names, so it no longer appears in the app or in an
+        exported archive.
+        """
+        del self._names[index]
+
     # -------------------------------------------------------------- mokuro
     def _find_mokuro_name(self) -> str | None:
         """Return the archive entry name of an embedded ``.mokuro``, if any."""
@@ -134,6 +143,20 @@ class CbzArchive(PageSource):
         import os
         base = os.path.splitext(os.path.basename(self.path))[0]
         return base + _MOKURO_EXT
+
+    def reopen(self) -> None:
+        """Reopen the archive from disk, refreshing the page/mokuro listing.
+
+        Used after the file has been rewritten (e.g. an in-place export) so the
+        in-memory state reflects the new contents on disk.
+        """
+        try:
+            self._zip.close()
+        except Exception:
+            pass
+        self._zip = zipfile.ZipFile(self.path, "r")
+        self._names = self._collect_page_names()
+        self._mokuro_name = self._find_mokuro_name()
 
     def close(self) -> None:
         try:

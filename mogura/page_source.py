@@ -42,6 +42,15 @@ class PageSource:
         """Return the raw, undecoded bytes of the page file at ``index``."""
         raise NotImplementedError
 
+    def delete_page(self, index: int) -> None:
+        """Remove the page at ``index`` from this source (in memory only).
+
+        The underlying file/archive on disk is never modified; the page is
+        simply dropped from the ordered list so it no longer appears in the
+        app or in any exported archive.
+        """
+        raise NotImplementedError
+
     def load_thumbnail(self, index: int, size: int = 160) -> Image.Image:
         """Load a page and shrink it to fit within a ``size`` px box."""
         image = self.load_image(index)
@@ -111,3 +120,6 @@ class FolderSource(PageSource):
         full_path = os.path.join(self.path, self._names[index])
         with open(full_path, "rb") as handle:
             return handle.read()
+
+    def delete_page(self, index: int) -> None:
+        del self._names[index]

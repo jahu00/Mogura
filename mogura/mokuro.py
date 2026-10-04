@@ -172,6 +172,20 @@ class MokuroData:
             return self._by_path[img_name]
         return self._by_path.get(img_name.rsplit("/", 1)[-1])
 
+    def remove_page(self, img_name: str) -> bool:
+        """Remove the page matching ``img_name`` and its data. Returns True
+        if a page was removed."""
+        page = self.page_for(img_name)
+        if page is None:
+            return False
+        self.pages = [p for p in self.pages if p is not page]
+        # Rebuild the path index so lookups stay consistent.
+        self._by_path = {}
+        for p in self.pages:
+            self._by_path[p.img_path] = p
+            self._by_path.setdefault(p.img_path.rsplit("/", 1)[-1], p)
+        return True
+
     @classmethod
     def load(cls, path: str) -> "MokuroData":
         with open(path, "r", encoding="utf-8") as handle:

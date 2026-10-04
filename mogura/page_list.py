@@ -22,9 +22,16 @@ class PageList(tk.Frame):
     SELECTED_BG = "#3d6fb4"
     NORMAL_BG = "#f0f0f0"
 
-    def __init__(self, master, on_select: Callable[[int], None], **kwargs):
+    def __init__(
+        self,
+        master,
+        on_select: Callable[[int], None],
+        on_delete: Optional[Callable[[int], None]] = None,
+        **kwargs,
+    ):
         super().__init__(master, **kwargs)
         self._on_select = on_select
+        self._on_delete = on_delete
 
         self.canvas = tk.Canvas(self, highlightthickness=0, width=self.THUMB_SIZE + 40)
         self.scrollbar = tk.Scrollbar(
@@ -43,6 +50,11 @@ class PageList(tk.Frame):
         self._inner.bind("<Configure>", self._on_inner_configure)
         self.canvas.bind("<Configure>", self._on_canvas_configure)
         self._bind_scroll(self.canvas)
+
+        # Right-click popup menu for a page row.
+        self._menu = tk.Menu(self, tearoff=0)
+        self._menu.add_command(label="Delete Page", command=self._on_menu_delete)
+        self._menu_index: Optional[int] = None
 
         # Keep references to PhotoImages so they are not garbage collected.
         self._thumbs: List[ImageTk.PhotoImage] = []
@@ -65,6 +77,21 @@ class PageList(tk.Frame):
 
     def _on_canvas_configure(self, event) -> None:
         self.canvas.itemconfigure(self._inner_id, width=event.width)
+
+    # ------------------------------------------------------------- popup menu
+    def _show_menu(self, event, index: int) -> None:
+        """Show the right-click popup menu for the page at ``index``."""
+        if self._on_delete is None:
+            return
+        self._menu_index = index
+        try:
+            self._menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self._menu.grab_release()
+
+    def _on_menu_delete(self) -> None:
+        if self._on_delete is not None and self._menu_index is not None:
+            self._on_delete(self._menu_index)
 
     # ---------------------------------------------------------------- content
     def clear(self) -> None:
@@ -150,6 +177,9 @@ class PageList(tk.Frame):
             for widget in (row, holder, label, caption, resolution, count, warn):
                 widget.bind(
                     "<Button-1>", lambda _e, i=index: self._on_select(i)
+                )
+                widget.bind(
+                    "<Button-3>", lambda e, i=index: self._show_menu(e, i)
                 )
                 self._bind_scroll(widget)
 

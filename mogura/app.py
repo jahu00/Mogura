@@ -167,6 +167,8 @@ class MoguraApp(_TkBase):
             command=self.save_mokuro_as,
             accelerator="Ctrl+Shift+S",
         )
+        file_menu.add_separator()
+        file_menu.add_command(label="Save CBZ...", command=self.save_cbz)
         file_menu.add_command(
             label="Export CBZ with Mokuro...", command=self.export_cbz
         )
@@ -299,7 +301,11 @@ class MoguraApp(_TkBase):
         # Left panel ("Pages"): titled container wrapping the thumbnail list.
         self._left_panel = tk.Frame(self._paned, width=200)
         self._make_panel_title(self._left_panel, "Pages")
-        self._page_list = PageList(self._left_panel, on_select=self.show_page)
+        self._page_list = PageList(
+            self._left_panel,
+            on_select=self.show_page,
+            on_delete=self.delete_page,
+        )
         self._page_list.pack(fill=tk.BOTH, expand=True)
 
         self._center = PageView(
@@ -568,6 +574,36 @@ class MoguraApp(_TkBase):
         return True
 
     # ----------------------------------------------------------------- export
+    def save_cbz(self) -> bool:
+        """Save a new CBZ containing only the current pages (no mokuro file)."""
+        if self._archive is None:
+            messagebox.showinfo(
+                "Nothing to save",
+                "Open images before saving a CBZ.",
+            )
+            return False
+        suggested = ""
+        if self._source_path:
+            root, _ext = os.path.splitext(self._source_path.rstrip("/"))
+            suggested = os.path.basename(root) + ".cbz"
+        path = filedialog.asksaveasfilename(
+            title="Save CBZ",
+            defaultextension=".cbz",
+            filetypes=[("Comic Book Archive", "*.cbz"), ("All files", "*.*")],
+            initialfile=suggested,
+            initialdir=self._initial_dir(),
+        )
+        if not path:
+            return False
+        try:
+            self._export_cbz_to(path, include_mokuro=False)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Failed to save CBZ", str(exc))
+            return False
+        self._remember_dir(path)
+        self._status.config(text=f"Saved: {path}")
+        return True
+
     def export_cbz(self) -> bool:
         """Export a new CBZ containing the current pages and the mokuro file."""
         if self._archive is None or self._mokuro is None:
@@ -591,7 +627,7 @@ class MoguraApp(_TkBase):
             return False
         self._text_panel.commit_pending()
         try:
-            self._export_cbz_to(path)
+            self._export_cbz_to(path, include_mokuro=True)
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror("Failed to export CBZ", str(exc))
             return False
@@ -599,33 +635,70 @@ class MoguraApp(_TkBase):
         self._status.config(text=f"Exported: {path}")
         return True
 
-    def _export_cbz_to(self, path: str) -> None:
-        """Write a CBZ with every current page image plus the mokuro file.
+    def _export_cbz_to(self, path: str, include_mokuro: bool = True) -> None:
+        """Write a CBZ with every current page image, optionally plus mokuro.
 
         Images are never modified by the app, so their original bytes are
         copied verbatim when they are already PNG or JPEG. Other formats are
-        re-encoded to JPEG for broad compatibility.
+        re-encoded to JPEG for broad compatibility. When ``include_mokuro`` is
+        True and mokuro data is loaded, the mokuro file is embedded as well.
+
+        The archive is written to a temporary file and then atomically moved
+        into place. This keeps the destination intact if writing fails, and
+        lets the user safely overwrite the CBZ that is currently open (the
+        source is read lazily from disk, so truncating it mid-write would
+        otherwise corrupt the output).
         """
         import io
         import os as _os
+        import tempfile
         import zipfile
 
-        mokuro_name = self._default_export_mokuro_name()
-        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as out:
-            for i in range(self._archive.page_count):
-                name = self._archive.page_name(i)
-                ext = _os.path.splitext(name)[1].lower()
-                if ext in (".png", ".jpg", ".jpeg"):
-                    # Copy original bytes without recompression.
-                    out.writestr(name, self._archive.read_raw(i))
-                else:
-                    # Re-encode uncommon formats to JPEG for compatibility.
-                    image = self._archive.load_image(i).convert("RGB")
-                    buf = io.BytesIO()
-                    image.save(buf, format="JPEG", quality=95)
-                    new_name = _os.path.splitext(name)[0] + ".jpg"
-                    out.writestr(new_name, buf.getvalue())
-            out.writestr(mokuro_name, self._mokuro.to_json().encode("utf-8"))
+        target_dir = _os.path.dirname(_os.path.abspath(path)) or None
+        fd, tmp_path = tempfile.mkstemp(suffix=".cbz", dir=target_dir)
+        _os.close(fd)
+        try:
+            with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as out:
+                for i in range(self._archive.page_count):
+                    name = self._archive.page_name(i)
+                    ext = _os.path.splitext(name)[1].lower()
+                    if ext in (".png", ".jpg", ".jpeg"):
+                        # Copy original bytes without recompression.
+                        out.writestr(name, self._archive.read_raw(i))
+                    else:
+                        # Re-encode uncommon formats to JPEG for compatibility.
+                        image = self._archive.load_image(i).convert("RGB")
+                        buf = io.BytesIO()
+                        image.save(buf, format="JPEG", quality=95)
+                        new_name = _os.path.splitext(name)[0] + ".jpg"
+                        out.writestr(new_name, buf.getvalue())
+                if include_mokuro and self._mokuro is not None:
+                    mokuro_name = self._default_export_mokuro_name()
+                    out.writestr(
+                        mokuro_name, self._mokuro.to_json().encode("utf-8")
+                    )
+        except Exception:
+            if _os.path.exists(tmp_path):
+                _os.remove(tmp_path)
+            raise
+
+        # If we are overwriting the currently open CBZ, close its handle first
+        # so the replace succeeds (notably on Windows) and reopen it after.
+        reopen_source = (
+            isinstance(self._archive, CbzArchive)
+            and _os.path.abspath(self._archive.path) == _os.path.abspath(path)
+        )
+        if reopen_source:
+            self._archive.close()
+        try:
+            _os.replace(tmp_path, path)
+        except Exception:
+            if _os.path.exists(tmp_path):
+                _os.remove(tmp_path)
+            raise
+        finally:
+            if reopen_source:
+                self._archive.reopen()
 
     def _default_export_mokuro_name(self) -> str:
         if self._source_path:
@@ -777,6 +850,64 @@ class MoguraApp(_TkBase):
         self._status.config(
             text=f"Page {index + 1} / {self._archive.page_count}  -  "
             f"{self._archive.page_name(index)}"
+        )
+
+    def delete_page(self, index: int) -> None:
+        """Delete the page at ``index`` after confirming with the user.
+
+        Removes the page's mokuro data and drops the page from the source so
+        it no longer appears in the app or in an exported CBZ. The underlying
+        file/archive on disk is left untouched.
+        """
+        if self._archive is None:
+            return
+        if not (0 <= index < self._archive.page_count):
+            return
+
+        name = self._archive.page_name(index)
+        if not messagebox.askyesno(
+            "Delete page",
+            f"Delete page {index + 1} ({os.path.basename(name)})?\n\n"
+            "This removes the page and its text data from the app. The "
+            "original file on disk is not modified, but exported CBZ files "
+            "will not include this page.",
+            icon=messagebox.WARNING,
+        ):
+            return
+
+        # Commit any in-progress edit before mutating the model.
+        self._text_panel.commit_pending()
+
+        # Remove associated mokuro data, if any.
+        if self._mokuro is not None and self._mokuro.remove_page(name):
+            self._mark_dirty()
+
+        # Drop the page from the source.
+        self._archive.delete_page(index)
+
+        # Rebuild the thumbnail list to reflect the new page set.
+        self._page_list.populate(self._archive)
+
+        if self._archive.page_count == 0:
+            # Nothing left to show.
+            self._current_page = -1
+            self._current_image = None
+            self._center.show_image(None)
+            self._center.set_boxes([])
+            self._text_panel.show_page(None)
+            self._update_text_counts()
+            self._status.config(text="All pages deleted.")
+            return
+
+        # Show a sensible neighbouring page.
+        new_index = min(index, self._archive.page_count - 1)
+        # Force a reload since the index now points at a different page.
+        self._current_page = -1
+        self.show_page(new_index)
+        self._update_text_counts()
+        self._status.config(
+            text=f"Deleted page {index + 1}. "
+            f"{self._archive.page_count} page(s) remaining."
         )
 
     def prev_page(self) -> None:
