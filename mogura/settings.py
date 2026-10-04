@@ -17,6 +17,9 @@ _SETTINGS_FILE = "settings.json"
 # Default values for every known setting.
 _DEFAULTS: Dict[str, Any] = {
     "auto_load_mokuro": True,
+    # Automatically create empty mokuro data when opening images that have no
+    # mokuro file, so the user can annotate right away.
+    "auto_create_mokuro": True,
     # Directory of the most recently opened file, used to seed file dialogs.
     "last_dir": "",
 }

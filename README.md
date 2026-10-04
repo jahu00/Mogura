@@ -7,8 +7,9 @@ A desktop editor for [mokuro](https://github.com/kha-white/mokuro) files built w
 ## Features (current)
 
 - Top menu: open a CBZ file (optionally with an embedded mokuro), open a folder
-  of images, open/save a mokuro file, export a CBZ with mokuro embedded, toggle
-  panels, persistent settings, exit
+  of images, open/save a mokuro file, create fresh mokuro data from scratch for
+  the open images, export a CBZ with mokuro embedded, toggle panels, persistent
+  settings, exit
 - Toolbar: quick access to open CBZ and panel toggles
 - Left panel: scrollable page thumbnails for navigation; the current page is
   highlighted (collapsible). Each thumbnail shows its resolution (top-right
@@ -60,12 +61,24 @@ or
 - **Open Mokuro**: File menu → *Open Mokuro...* (or Ctrl+M), or the toolbar
   button. Loads the OCR text for the volume; open the matching CBZ or image
   folder to see each page's text blocks in the "Text" panel.
-- **Settings**: the Settings menu has *Auto-load matching Mokuro file*. When
-  enabled (the default), opening `manga.cbz` or a folder named `manga`
-  automatically loads a sibling `manga.mokuro` if present. This preference is
-  saved to `~/.config/mogura/settings.json` and persists between runs. The
-  directory of the last opened/saved file is also remembered there and used to
-  seed the open and save dialogs.
+- **Create Mokuro Data**: File menu → *Create Mokuro Data*. With a CBZ or image
+  folder open, this starts fresh, empty mokuro data for the volume (one page
+  entry per image). You can then draw text boxes with *Add*, run OCR in the edit
+  dialog, type the text yourself, and save the result as a `.mokuro` file or
+  export a CBZ with the mokuro embedded — no existing mokuro file required. By
+  default this also happens automatically whenever you open images that have no
+  mokuro file (see Settings). Empty mokuro data (no text blocks) is treated as
+  having no unsaved changes, so you are not prompted to save it if you did not
+  add anything.
+- **Settings**: the Settings menu has *Auto-load matching Mokuro file* and
+  *Auto-create empty Mokuro data*. When auto-load is enabled (the default),
+  opening `manga.cbz` or a folder named `manga` automatically loads a sibling
+  `manga.mokuro` if present. When auto-create is enabled (the default), opening
+  images with no embedded or sibling mokuro file automatically starts fresh,
+  empty mokuro data so you can annotate right away. These preferences are saved
+  to `~/.config/mogura/settings.json` and persist between runs. The directory of
+  the last opened/saved file is also remembered there and used to seed the open
+  and save dialogs.
 - **Navigate**: click a thumbnail in the left panel, use the previous/next
   buttons in the toolbar, or press Page Up / Page Down.
 - **Pan**: click and drag inside the central page view.

@@ -38,6 +38,14 @@ class PageSource:
         """Load and decode the page at ``index`` as a PIL image."""
         raise NotImplementedError
 
+    def image_size(self, index: int) -> tuple:
+        """Return ``(width, height)`` of the page without fully decoding it.
+
+        The default reads the image header via PIL's lazy ``open``; subclasses
+        may override for efficiency.
+        """
+        raise NotImplementedError
+
     def read_raw(self, index: int) -> bytes:
         """Return the raw, undecoded bytes of the page file at ``index``."""
         raise NotImplementedError
@@ -115,6 +123,11 @@ class FolderSource(PageSource):
         image = Image.open(full_path)
         image.load()
         return image
+
+    def image_size(self, index: int) -> tuple:
+        full_path = os.path.join(self.path, self._names[index])
+        with Image.open(full_path) as image:
+            return image.size
 
     def read_raw(self, index: int) -> bytes:
         full_path = os.path.join(self.path, self._names[index])

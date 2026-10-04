@@ -33,8 +33,12 @@ Reference structure (mokuro 0.2.5)::
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List
+
+# Mokuro format version produced when creating new data from scratch.
+MOKURO_VERSION = "0.2.5"
 
 
 @dataclass
@@ -172,6 +176,14 @@ class MokuroData:
             return self._by_path[img_name]
         return self._by_path.get(img_name.rsplit("/", 1)[-1])
 
+    def is_empty(self) -> bool:
+        """True if no page carries any text block.
+
+        Used to treat freshly created (block-less) mokuro data as having no
+        real changes worth saving.
+        """
+        return all(not page.blocks for page in self.pages)
+
     def remove_page(self, img_name: str) -> bool:
         """Remove the page matching ``img_name`` and its data. Returns True
         if a page was removed."""
@@ -201,6 +213,44 @@ class MokuroData:
         if "pages" not in raw:
             raise ValueError("Not a valid mokuro file (no 'pages').")
         return cls(path, raw)
+
+    @classmethod
+    def create_empty(cls, title: str = "", path: str = "") -> "MokuroData":
+        """Create a new, empty mokuro volume with no pages.
+
+        Produces the top-level metadata a mokuro file expects (version,
+        title/volume plus their UUIDs). Pages are added later with
+        :meth:`ensure_page` as the user annotates them.
+        """
+        raw: Dict[str, Any] = {
+            "version": MOKURO_VERSION,
+            "title": title,
+            "title_uuid": str(uuid.uuid4()),
+            "volume": title,
+            "volume_uuid": str(uuid.uuid4()),
+            "pages": [],
+        }
+        return cls(path, raw)
+
+    def ensure_page(self, img_name: str, img_width: int, img_height: int) -> MokuroPage:
+        """Return the page for ``img_name``, creating an empty one if missing.
+
+        Newly created pages are appended and indexed so later lookups succeed.
+        The image dimensions are recorded on the page as mokuro expects.
+        """
+        page = self.page_for(img_name)
+        if page is not None:
+            return page
+        page = MokuroPage(
+            img_path=img_name,
+            img_width=int(img_width),
+            img_height=int(img_height),
+            extra={"version": MOKURO_VERSION},
+        )
+        self.pages.append(page)
+        self._by_path[page.img_path] = page
+        self._by_path.setdefault(page.img_path.rsplit("/", 1)[-1], page)
+        return page
 
     def to_json(self) -> str:
         """Serialize the (possibly edited) data to a JSON string."""

@@ -160,6 +160,9 @@ class MoguraApp(_TkBase):
             label="Open Mokuro...", command=self.open_mokuro, accelerator="Ctrl+M"
         )
         file_menu.add_command(
+            label="Create Mokuro Data", command=self.create_mokuro
+        )
+        file_menu.add_command(
             label="Save Mokuro", command=self.save_mokuro, accelerator="Ctrl+S"
         )
         file_menu.add_command(
@@ -211,6 +214,14 @@ class MoguraApp(_TkBase):
             label="Auto-load matching Mokuro file",
             variable=self._auto_load_var,
             command=self._on_auto_load_toggle,
+        )
+        self._auto_create_var = tk.BooleanVar(
+            value=self._settings.get("auto_create_mokuro")
+        )
+        settings_menu.add_checkbutton(
+            label="Auto-create empty Mokuro data",
+            variable=self._auto_create_var,
+            command=self._on_auto_create_toggle,
         )
         menubar.add_cascade(label="Settings", menu=settings_menu)
 
@@ -358,6 +369,9 @@ class MoguraApp(_TkBase):
     def _on_auto_load_toggle(self) -> None:
         self._settings.set("auto_load_mokuro", self._auto_load_var.get())
 
+    def _on_auto_create_toggle(self) -> None:
+        self._settings.set("auto_create_mokuro", self._auto_create_var.get())
+
     # ----------------------------------------------------------- bounding box
     def toggle_boxes(self) -> None:
         """Toggle bounding box visibility (from the toolbar button)."""
@@ -482,6 +496,71 @@ class MoguraApp(_TkBase):
                 "Text data loaded. Open the matching CBZ or image folder to "
                 "view pages alongside the text.",
             )
+
+    def create_mokuro(self) -> None:
+        """Create empty mokuro data for the current image source.
+
+        This lets the user annotate a CBZ/folder from scratch (draw boxes,
+        OCR, type text) without first loading or having a ``.mokuro`` file.
+        A page entry is created for every image, recording its dimensions, so
+        the Add/OCR tools work on any page immediately.
+        """
+        if self._archive is None:
+            messagebox.showinfo(
+                "Open images first",
+                "Open a CBZ or image folder before creating mokuro data.",
+            )
+            return
+        # If existing data has real content, confirm before discarding it.
+        # Empty data (e.g. auto-created) is treated as nothing to lose.
+        if self._mokuro is not None and not self._mokuro.is_empty():
+            if not messagebox.askyesno(
+                "Replace mokuro data",
+                "Text data is already loaded. Replace it with new, empty "
+                "mokuro data? This discards the current text.",
+                icon=messagebox.WARNING,
+            ):
+                return
+            if not self._maybe_save_changes():
+                return
+
+        self._install_empty_mokuro()
+        self._status.config(
+            text=f"Created empty mokuro data ({len(self._mokuro.pages)} pages). "
+            "Use Add to draw text boxes, then OCR or type the text."
+        )
+
+    def _install_empty_mokuro(self) -> None:
+        """Build and install empty mokuro data for the current source.
+
+        Creates a page entry for each image (recording its dimensions) and
+        wires the data into the app. Empty data counts as "no changes", so the
+        dirty flag is left clear until the user actually adds a block.
+        """
+        if self._archive is None:
+            return
+        title = ""
+        if self._source_path:
+            title = os.path.splitext(
+                os.path.basename(self._source_path.rstrip("/"))
+            )[0]
+
+        mokuro = MokuroData.create_empty(title=title)
+        for i in range(self._archive.page_count):
+            name = self._archive.page_name(i)
+            try:
+                width, height = self._archive.image_size(i)
+            except Exception:  # noqa: BLE001 - fall back to zero if unreadable
+                width, height = 0, 0
+            mokuro.ensure_page(name, width, height)
+
+        self._mokuro = mokuro
+        # New data is not tied to a file yet, nor embedded in the CBZ.
+        self._mokuro_in_cbz = False
+        self._set_dirty(False)
+        if self._current_page >= 0:
+            self._update_text_for_page(self._current_page)
+        self._update_text_counts()
 
     def _load_mokuro(self, path: str, silent_errors: bool = False) -> bool:
         """Load a mokuro file and refresh the text view. Returns success."""
@@ -733,6 +812,9 @@ class MoguraApp(_TkBase):
         """
         if not self._dirty or self._mokuro is None:
             return True
+        # Empty data (no text blocks anywhere) is treated as nothing to save.
+        if self._mokuro.is_empty():
+            return True
         answer = messagebox.askyesnocancel(
             "Unsaved changes",
             "The mokuro text data has unsaved changes. Save before continuing?",
@@ -793,9 +875,13 @@ class MoguraApp(_TkBase):
         self.show_page(0)
 
         # A mokuro embedded in the CBZ takes precedence; otherwise try a
-        # sibling file if auto-load is enabled.
+        # sibling file if auto-load is enabled. If nothing was loaded and
+        # auto-create is enabled, start fresh, empty mokuro data so the user
+        # can annotate right away.
         if not self._load_embedded_mokuro():
             self._maybe_auto_load_mokuro(path)
+        if self._mokuro is None and self._settings.get("auto_create_mokuro"):
+            self._install_empty_mokuro()
 
     def _load_embedded_mokuro(self) -> bool:
         """Load a mokuro embedded in the current CBZ, if present."""

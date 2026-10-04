@@ -54,6 +54,12 @@ class CbzArchive(PageSource):
         image.load()
         return image
 
+    def image_size(self, index: int) -> tuple:
+        """Return ``(width, height)`` of the page, reading only its header."""
+        data = self._zip.read(self._names[index])
+        with Image.open(io.BytesIO(data)) as image:
+            return image.size
+
     def read_raw(self, index: int) -> bytes:
         """Return the raw, undecoded bytes of the page at ``index``."""
         return self._zip.read(self._names[index])
