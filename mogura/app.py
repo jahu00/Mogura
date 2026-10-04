@@ -10,6 +10,7 @@ from typing import Optional
 from .cbz import CbzArchive
 from .combine_dialog import CombineDialog
 from .edit_dialog import EditBlockDialog
+from .find_dialog import FindDialog
 from .split_dialog import SplitDialog
 from .icons import get_icon
 from .mokuro import MokuroData
@@ -57,6 +58,11 @@ class MoguraApp(_TkBase):
 
         self._left_visible = True
         self._right_visible = True
+
+        # Find/replace state: the open dialog (if any) and the current match
+        # position, tracked as (page_index, block_index, char_offset).
+        self._find_dialog: Optional[FindDialog] = None
+        self._find_match: Optional[tuple] = None
 
         self._build_menu()
         self._build_toolbar()
@@ -168,6 +174,17 @@ class MoguraApp(_TkBase):
         file_menu.add_command(label="Exit", command=self._on_close)
         menubar.add_cascade(label="File", menu=file_menu)
 
+        edit_menu = tk.Menu(menubar, tearoff=0)
+        edit_menu.add_command(
+            label="Find...", command=self.open_find, accelerator="Ctrl+F"
+        )
+        edit_menu.add_command(
+            label="Find and Replace...",
+            command=self.open_find_replace,
+            accelerator="Ctrl+H",
+        )
+        menubar.add_cascade(label="Edit", menu=edit_menu)
+
         view_menu = tk.Menu(menubar, tearoff=0)
         view_menu.add_command(
             label="Toggle Pages Panel", command=self.toggle_left_panel
@@ -201,6 +218,8 @@ class MoguraApp(_TkBase):
         self.bind_all("<Control-m>", lambda _e: self.open_mokuro())
         self.bind_all("<Control-s>", lambda _e: self.save_mokuro())
         self.bind_all("<Control-S>", lambda _e: self.save_mokuro_as())
+        self.bind_all("<Control-f>", lambda _e: self.open_find())
+        self.bind_all("<Control-h>", lambda _e: self.open_find_replace())
         self.bind_all("<Prior>", lambda _e: self.prev_page())  # Page Up
         self.bind_all("<Next>", lambda _e: self.next_page())   # Page Down
 
@@ -887,6 +906,164 @@ class MoguraApp(_TkBase):
         self._center.set_selected_box(self._text_panel.selected_index)
         self._update_text_counts()
         self._refresh_overlaps(page)
+
+    # ------------------------------------------------------------ find/replace
+    def open_find(self) -> None:
+        """Open (or focus) the non-blocking Find dialog."""
+        self._open_find_dialog(replace=False)
+
+    def open_find_replace(self) -> None:
+        """Open (or focus) the non-blocking Find and Replace dialog."""
+        self._open_find_dialog(replace=True)
+
+    def _open_find_dialog(self, replace: bool) -> None:
+        if self._find_dialog is not None and self._find_dialog.winfo_exists():
+            # Reuse the existing window, switching mode if needed.
+            self._find_dialog.set_mode(replace)
+            self._find_dialog.deiconify()
+            self._find_dialog.lift()
+            self._find_dialog.focus_set()
+            return
+        self._find_dialog = FindDialog(self, self, replace=replace)
+
+    def on_find_closed(self) -> None:
+        """Callback from the dialog when it closes."""
+        self._find_dialog = None
+        self._find_match = None
+        self._text_panel.clear_find_highlight()
+
+    def _iter_match_positions(self, query: str):
+        """Yield ``(page_index, block_index, char_offset)`` for every match.
+
+        Positions are ordered by page, then block, then offset, so that
+        "next"/"previous" follow a natural reading order through the volume.
+        """
+        if not query or self._mokuro is None or self._archive is None:
+            return
+        for pi in range(self._archive.page_count):
+            page = self._mokuro.page_for(self._archive.page_name(pi))
+            if page is None:
+                continue
+            for bi, block in enumerate(page.blocks):
+                text = "\n".join(block.lines)
+                start = text.find(query)
+                while start != -1:
+                    yield (pi, bi, start)
+                    start = text.find(query, start + 1)
+
+    def _require_mokuro_for_find(self, query: str) -> Optional[str]:
+        """Return an error status string, or None if a search can proceed."""
+        if self._mokuro is None or self._archive is None:
+            return "Open a mokuro file to search its text."
+        if not query:
+            return "Enter text to find."
+        return None
+
+    def find_next(self, query: str) -> str:
+        return self._find_in_direction(query, forward=True)
+
+    def find_prev(self, query: str) -> str:
+        return self._find_in_direction(query, forward=False)
+
+    def _find_in_direction(self, query: str, forward: bool) -> str:
+        error = self._require_mokuro_for_find(query)
+        if error is not None:
+            return error
+        # Make sure the model reflects any in-progress inline edits.
+        self._text_panel.commit_pending()
+
+        matches = list(self._iter_match_positions(query))
+        if not matches:
+            self._text_panel.clear_find_highlight()
+            self._find_match = None
+            return f"No matches for '{query}'."
+
+        index = self._pick_match_index(matches, forward)
+        target = matches[index]
+        self._go_to_match(target, len(query))
+        return f"Match {index + 1} of {len(matches)}."
+
+    def _pick_match_index(self, matches, forward: bool) -> int:
+        """Choose the next/previous match index relative to the current one."""
+        current = self._find_match
+        if current is None:
+            return 0 if forward else len(matches) - 1
+        if forward:
+            for i, pos in enumerate(matches):
+                if pos > current:
+                    return i
+            return 0  # wrap to first
+        for i in range(len(matches) - 1, -1, -1):
+            if matches[i] < current:
+                return i
+        return len(matches) - 1  # wrap to last
+
+    def _go_to_match(self, match: tuple, length: int) -> None:
+        """Navigate to and highlight the given match position."""
+        page_index, block_index, offset = match
+        if page_index != self._current_page:
+            self.show_page(page_index)
+        self._find_match = match
+        self._text_panel.set_selected(block_index)
+        self._on_block_selected(block_index)
+        self._text_panel.highlight_match(block_index, offset, offset + length)
+
+    def replace_one(self, query: str, replacement: str) -> str:
+        error = self._require_mokuro_for_find(query)
+        if error is not None:
+            return error
+        self._text_panel.commit_pending()
+
+        # Replace the current match if one is selected; otherwise find one.
+        if self._find_match is None:
+            return self.find_next(query)
+
+        page_index, block_index, offset = self._find_match
+        page = self._mokuro.page_for(self._archive.page_name(page_index))
+        if page is None or not (0 <= block_index < len(page.blocks)):
+            return self.find_next(query)
+        block = page.blocks[block_index]
+        text = "\n".join(block.lines)
+        # Verify the match still sits where we expect it.
+        if text[offset:offset + len(query)] != query:
+            return self.find_next(query)
+        new_text = text[:offset] + replacement + text[offset + len(query):]
+        block.lines = new_text.split("\n")
+        self._mark_dirty()
+        # Advance past the replacement so the next search skips it.
+        self._find_match = (page_index, block_index, offset + len(replacement) - 1)
+        if page_index == self._current_page:
+            self._text_panel.refresh()
+            self._text_panel.set_selected(block_index)
+        # Find the following match.
+        status = self.find_next(query)
+        return f"Replaced 1. {status}"
+
+    def replace_all(self, query: str, replacement: str) -> str:
+        error = self._require_mokuro_for_find(query)
+        if error is not None:
+            return error
+        self._text_panel.commit_pending()
+
+        count = 0
+        for pi in range(self._archive.page_count):
+            page = self._mokuro.page_for(self._archive.page_name(pi))
+            if page is None:
+                continue
+            for block in page.blocks:
+                text = "\n".join(block.lines)
+                if query in text:
+                    count += text.count(query)
+                    block.lines = text.replace(query, replacement).split("\n")
+
+        if count == 0:
+            return f"No matches for '{query}'."
+        self._mark_dirty()
+        self._find_match = None
+        self._text_panel.clear_find_highlight()
+        self._update_text_for_page(self._current_page)
+        self._update_text_counts()
+        return f"Replaced {count} occurrence(s)."
 
     # ------------------------------------------------------------------ close
     def _on_close(self) -> None:

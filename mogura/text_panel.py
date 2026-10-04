@@ -331,6 +331,32 @@ class TextPanel(tk.Frame):
             if self._on_block_edited is not None:
                 self._on_block_edited(index, content)
 
+    # ------------------------------------------------------------ find/replace
+    def highlight_match(self, block_index: int, start: int, end: int) -> None:
+        """Highlight characters ``[start, end)`` in the given block's text box.
+
+        ``start``/``end`` are character offsets into the block text (the
+        ``"\\n"``-joined lines), matching Tk's ``"1.0+Nc"`` indexing which
+        counts newlines as single characters.
+        """
+        self.clear_find_highlight()
+        if not (0 <= block_index < len(self._block_widgets)):
+            return
+        widget = self._block_widgets[block_index]
+        widget.tag_configure("find_match", background="#ffd54f")
+        start_idx = f"1.0+{start}c"
+        end_idx = f"1.0+{end}c"
+        widget.tag_add("find_match", start_idx, end_idx)
+        widget.see(start_idx)
+
+    def clear_find_highlight(self) -> None:
+        """Remove any search-match highlight from all block text boxes."""
+        for widget in self._block_widgets:
+            try:
+                widget.tag_remove("find_match", "1.0", "end")
+            except tk.TclError:
+                pass
+
     def set_overlaps(self, indices) -> None:
         """Show the overlap marker on the given block indices (a set/list)."""
         flagged = set(indices or [])
