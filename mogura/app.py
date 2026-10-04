@@ -251,7 +251,23 @@ class MoguraApp(_TkBase):
                 font=("TkDefaultFont", 14),
             )
         btn.pack(side=tk.LEFT, padx=2, pady=2)
+        # Remember the default look so toggle styling can be undone.
+        btn._default_relief = btn.cget("relief")
+        btn._default_bg = btn.cget("background")
         return btn
+
+    # Background used to highlight a toggle button that is currently "on".
+    TOGGLE_ACTIVE_BG = "#aaccee"
+
+    def _set_toggle_active(self, btn, active: bool) -> None:
+        """Give a toolbar toggle button a pressed-in look when active."""
+        if active:
+            btn.config(relief=tk.SUNKEN, background=self.TOGGLE_ACTIVE_BG)
+        else:
+            btn.config(
+                relief=getattr(btn, "_default_relief", tk.RAISED),
+                background=getattr(btn, "_default_bg", None),
+            )
 
     def _build_toolbar(self) -> None:
         toolbar = tk.Frame(self, bd=1, relief=tk.RAISED)
@@ -275,15 +291,20 @@ class MoguraApp(_TkBase):
         tk.Frame(toolbar, width=1, bg="#c0c0c0").pack(
             side=tk.LEFT, fill=tk.Y, padx=4, pady=2
         )
-        self._toolbar_button(
+        self._pages_btn = self._toolbar_button(
             toolbar, "pages", "🗐", self.toggle_left_panel, "Toggle Pages"
         )
-        self._toolbar_button(
+        self._text_btn = self._toolbar_button(
             toolbar, "text", "💬", self.toggle_right_panel, "Toggle Text"
         )
-        self._toolbar_button(
+        self._boxes_btn = self._toolbar_button(
             toolbar, "bounding", "⬚", self.toggle_boxes, "Toggle Bounding Boxes"
         )
+
+        # Reflect the initial on/off state of the toggle buttons.
+        self._set_toggle_active(self._pages_btn, self._left_visible)
+        self._set_toggle_active(self._text_btn, self._right_visible)
+        self._set_toggle_active(self._boxes_btn, self._boxes_var.get())
 
         # Zoom level indicator, docked to the far right. Clicking it toggles
         # between 100% and fit-to-window.
@@ -384,21 +405,28 @@ class MoguraApp(_TkBase):
 
     def _apply_boxes_visibility(self) -> None:
         self._center.set_boxes_visible(self._boxes_var.get())
+        self._set_toggle_active(self._boxes_btn, self._boxes_var.get())
 
     # ------------------------------------------------------- box move/resize
     def toggle_box_edit(self) -> None:
         """Toggle move/resize handles on the selected bounding box."""
         if self._center.in_edit_mode:
             self._center.end_edit_mode()
+            self._sync_box_edit_button()
             return
         if self._mokuro is None or self._text_panel.selected_index is None:
             self._status.config(text="Select a text item first to move/resize its box.")
             return
         self._center.begin_edit_mode()
+        self._sync_box_edit_button()
         self._status.config(
             text="Drag the box to move it, or its handles to resize. "
             "Press the button again to finish."
         )
+
+    def _sync_box_edit_button(self) -> None:
+        """Keep the move/resize button's look in step with the canvas state."""
+        self._text_panel.set_box_edit_active(self._center.in_edit_mode)
 
     def _on_box_edited_on_canvas(self, index: int, box) -> None:
         """The selected box was moved/resized on the canvas."""
@@ -433,6 +461,7 @@ class MoguraApp(_TkBase):
         else:
             self._paned.add(self._left_panel, minsize=120, width=200, before=self._center)
         self._left_visible = not self._left_visible
+        self._set_toggle_active(self._pages_btn, self._left_visible)
 
     def toggle_right_panel(self) -> None:
         if self._right_visible:
@@ -440,6 +469,7 @@ class MoguraApp(_TkBase):
         else:
             self._paned.add(self._right_panel, minsize=120, width=200)
         self._right_visible = not self._right_visible
+        self._set_toggle_active(self._text_btn, self._right_visible)
 
     # ------------------------------------------------------------------ file
     def _initial_dir(self) -> Optional[str]:
@@ -712,6 +742,11 @@ class MoguraApp(_TkBase):
             return False
         self._remember_dir(path)
         self._status.config(text=f"Exported: {path}")
+        # When no mokuro file was loaded (neither a standalone file nor one
+        # embedded in the CBZ), this export is the only place the mokuro data
+        # has been persisted, so treat it as saved and clear change tracking.
+        if not self._mokuro.path and not self._mokuro_in_cbz:
+            self._set_dirty(False)
         return True
 
     def _export_cbz_to(self, path: str, include_mokuro: bool = True) -> None:
@@ -1030,10 +1065,12 @@ class MoguraApp(_TkBase):
     def _on_box_selected(self, index: int) -> None:
         """A bounding box was clicked in the page view."""
         self._text_panel.set_selected(index)
+        self._sync_box_edit_button()
 
     def _on_block_selected(self, index: int) -> None:
         """A text block was selected in the right panel."""
         self._center.set_selected_box(index)
+        self._sync_box_edit_button()
 
     def _on_add_requested(self) -> None:
         """User pressed Add: arm rectangle drawing on the page.
@@ -1045,6 +1082,7 @@ class MoguraApp(_TkBase):
             return
         if self._center.in_draw_mode:
             self._center.cancel_draw_mode()
+            self._sync_add_button()
             self._status.config(text="Adding text item cancelled.")
             return
         self._status.config(
@@ -1052,9 +1090,15 @@ class MoguraApp(_TkBase):
             "(or press Add again to cancel)."
         )
         self._center.begin_draw_mode()
+        self._sync_add_button()
+
+    def _sync_add_button(self) -> None:
+        """Keep the Add button's look in step with the canvas draw mode."""
+        self._text_panel.set_add_active(self._center.in_draw_mode)
 
     def _on_box_drawn(self, box) -> None:
         """Rectangle drawing finished; ``box`` is None if cancelled/degenerate."""
+        self._sync_add_button()
         if box is None:
             self._status.config(text="Adding text item cancelled.")
             return

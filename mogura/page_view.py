@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import os
 import tkinter as tk
 from typing import Optional
 
 from PIL import Image, ImageTk
+
+# Path to the application logo, shown as a placeholder when no page is loaded.
+_LOGO_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logo.png"
+)
 
 
 class PageView(tk.Frame):
@@ -64,6 +70,12 @@ class PageView(tk.Frame):
         self._source_image: Optional[Image.Image] = None
         self._photo: Optional[ImageTk.PhotoImage] = None
         self._image_id: Optional[int] = None
+
+        # Logo placeholder shown when no page image is loaded. The source
+        # image is loaded lazily and kept around to re-scale on resize.
+        self._logo_source: Optional[Image.Image] = None
+        self._logo_photo: Optional[ImageTk.PhotoImage] = None
+        self._logo_id: Optional[int] = None
 
         self._scale = 1.0
         # Top-left position of the image on the canvas (in canvas coords).
@@ -412,6 +424,8 @@ class PageView(tk.Frame):
     def _on_resize(self, _event) -> None:
         if self._source_image is not None:
             self._render()
+        else:
+            self._render_logo()
 
     # ------------------------------------------------------------------ zoom
     def _zoom_at(self, cx: float, cy: float, factor: float) -> None:
@@ -462,7 +476,11 @@ class PageView(tk.Frame):
             self._image_id = None
             self._photo = None
             self._box_ids = []
+            self._logo_id = None
+            self._logo_photo = None
+            self._render_logo()
             return
+        self._clear_logo()
         self.fit_to_window()
 
     def set_boxes(self, boxes: list) -> None:
@@ -515,6 +533,54 @@ class PageView(tk.Frame):
         self._offset_y = (ch - ih * self._scale) / 2
         self._render()
         self._notify_zoom()
+
+    # ------------------------------------------------------------------ logo
+    # Fraction of the smaller canvas dimension the logo should span.
+    LOGO_SCREEN_FRACTION = 0.5
+    # Hard cap so the logo never gets gigantic on large windows.
+    LOGO_MAX_SIZE = 320
+
+    def _load_logo(self) -> Optional[Image.Image]:
+        """Load (and cache) the logo source image, or None if unavailable."""
+        if self._logo_source is None:
+            try:
+                self._logo_source = Image.open(_LOGO_PATH).convert("RGBA")
+            except Exception:  # noqa: BLE001 - no logo is non-fatal
+                self._logo_source = None
+        return self._logo_source
+
+    def _clear_logo(self) -> None:
+        if self._logo_id is not None:
+            self.canvas.delete(self._logo_id)
+            self._logo_id = None
+        self._logo_photo = None
+
+    def _render_logo(self) -> None:
+        """Draw the logo centered on the canvas when no page is loaded."""
+        if self._source_image is not None:
+            return
+        source = self._load_logo()
+        if source is None:
+            return
+        self.update_idletasks()
+        cw = self.canvas.winfo_width() or 1
+        ch = self.canvas.winfo_height() or 1
+
+        target = int(min(cw, ch) * self.LOGO_SCREEN_FRACTION)
+        target = max(1, min(target, self.LOGO_MAX_SIZE, max(source.size)))
+        iw, ih = source.size
+        scale = target / max(iw, ih)
+        disp = (max(1, int(iw * scale)), max(1, int(ih * scale)))
+
+        resized = source.resize(disp, Image.LANCZOS)
+        self._logo_photo = ImageTk.PhotoImage(resized)
+        if self._logo_id is None:
+            self._logo_id = self.canvas.create_image(
+                cw / 2, ch / 2, anchor=tk.CENTER, image=self._logo_photo
+            )
+        else:
+            self.canvas.itemconfigure(self._logo_id, image=self._logo_photo)
+            self.canvas.coords(self._logo_id, cw / 2, ch / 2)
 
     # ------------------------------------------------------------------ render
     def _render(self) -> None:

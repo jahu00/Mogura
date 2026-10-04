@@ -14,6 +14,8 @@ class TextPanel(tk.Frame):
 
     NORMAL_BG = "#f0f0f0"
     SELECTED_BG = "#d6e4f5"
+    # Background used to highlight the box move/resize button while it is on.
+    TOGGLE_ACTIVE_BG = "#aaccee"
 
     def __init__(
         self,
@@ -107,9 +109,38 @@ class TextPanel(tk.Frame):
                     font=("TkDefaultFont", 11),
                 )
             btn.pack(side=tk.LEFT, padx=2, pady=2)
+            # Remember the default look so toggle styling can be undone.
+            btn._default_relief = btn.cget("relief")
+            btn._default_bg = btn.cget("background")
             self._tool_buttons.append(btn)
 
+        # Named handles for the two toggle-style buttons (first and last).
+        self._add_btn = self._tool_buttons[0]
+        self._box_edit_btn = self._tool_buttons[-1]
+
         self._update_toolbar_state()
+
+    def _set_button_active(self, btn, active: bool) -> None:
+        """Give a toolbar button a pressed-in look when active."""
+        if active:
+            btn.config(relief=tk.SUNKEN, background=self.TOGGLE_ACTIVE_BG)
+        else:
+            btn.config(
+                relief=getattr(btn, "_default_relief", tk.RAISED),
+                background=getattr(btn, "_default_bg", None),
+            )
+
+    def set_box_edit_active(self, active: bool) -> None:
+        """Give the move/resize box button a pressed-in look when active."""
+        if not getattr(self, "_box_edit_btn", None):
+            return
+        self._set_button_active(self._box_edit_btn, active)
+
+    def set_add_active(self, active: bool) -> None:
+        """Give the Add button a pressed-in look while draw mode is armed."""
+        if not getattr(self, "_add_btn", None):
+            return
+        self._set_button_active(self._add_btn, active)
 
     def _update_toolbar_state(self) -> None:
         """Enable/disable toolbar buttons based on current selection/page."""
