@@ -221,7 +221,7 @@ class EditBlockDialog(tk.Toplevel):
         self.config(cursor="watch")
         self.update_idletasks()
         try:
-            lines = ocr.recognize(crop)
+            lines = ocr.recognize(crop, vertical=self._vertical_var.get())
         except Exception as exc:  # pragma: no cover - runtime/engine errors
             messagebox.showerror(
                 "OCR failed", f"OCR failed:\n{exc}", parent=self
