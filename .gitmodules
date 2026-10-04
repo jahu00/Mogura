@@ -1,0 +1,3 @@
+[submodule "PaddleOCR-JP-ONNX"]
+	path = PaddleOCR-JP-ONNX
+	url = https://github.com/jahu00/PaddleOCR-JP-ONNX.git

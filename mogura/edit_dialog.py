@@ -19,6 +19,7 @@ from typing import Optional
 
 from PIL import Image, ImageTk
 
+from . import ocr
 from .mokuro import TextBlock
 from .special_chars import SpecialCharButton
 from .text_render import render_text
@@ -161,13 +162,20 @@ class EditBlockDialog(tk.Toplevel):
         self._text.pack(fill=tk.X, pady=(0, 2))
         self._text.bind("<KeyRelease>", lambda _e: self._refresh_preview())
 
-        # Quick-insert drop-down for common special characters.
+        # Quick-insert drop-down for common special characters, plus OCR.
         specials = tk.Frame(editors)
         specials.pack(fill=tk.X, pady=(0, 6))
         tk.Label(specials, text="Insert:").pack(side=tk.LEFT)
         SpecialCharButton(
             specials, target=self._text, on_insert=self._refresh_preview
         ).pack(side=tk.LEFT, padx=1)
+
+        self._ocr_button = tk.Button(
+            specials, text="OCR", command=self._on_ocr
+        )
+        self._ocr_button.pack(side=tk.RIGHT)
+        if not ocr.is_available():
+            self._ocr_button.config(state=tk.DISABLED)
 
         # Orientation.
         orient = tk.Frame(editors)
@@ -191,6 +199,48 @@ class EditBlockDialog(tk.Toplevel):
             entry = tk.Spinbox(boxf, from_=0, to=100000, width=6, textvariable=var)
             entry.pack(side=tk.LEFT)
             var.trace_add("write", lambda *_a: self._refresh_preview())
+
+    # ------------------------------------------------------------------- ocr
+    def _on_ocr(self) -> None:
+        """Run OCR on the current bounding box and replace the text."""
+        if not ocr.is_available():
+            messagebox.showinfo(
+                "OCR unavailable", ocr.unavailable_reason(), parent=self
+            )
+            return
+        crop = self._crop_original(self._current_box())
+        if crop is None:
+            messagebox.showwarning(
+                "OCR",
+                "No image region available to recognize.",
+                parent=self,
+            )
+            return
+
+        self._ocr_button.config(state=tk.DISABLED)
+        self.config(cursor="watch")
+        self.update_idletasks()
+        try:
+            lines = ocr.recognize(crop)
+        except Exception as exc:  # pragma: no cover - runtime/engine errors
+            messagebox.showerror(
+                "OCR failed", f"OCR failed:\n{exc}", parent=self
+            )
+            return
+        finally:
+            self.config(cursor="")
+            if ocr.is_available():
+                self._ocr_button.config(state=tk.NORMAL)
+
+        if not lines:
+            messagebox.showinfo(
+                "OCR", "No text was detected in this region.", parent=self
+            )
+            return
+
+        self._text.delete("1.0", "end")
+        self._text.insert("1.0", "\n".join(lines))
+        self._refresh_preview()
 
     # --------------------------------------------------------------- buttons
     def _build_buttons(self) -> None:

@@ -1,2 +1,6 @@
 Pillow>=10.0.0
 tkinterdnd2>=0.4.0
+
+# Optional: enables the OCR button in the edit dialog. Safe to omit; the app
+# runs without it and OCR simply reports as unavailable.
+# rapidocr_onnxruntime>=1.3.0
