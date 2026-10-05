@@ -19,10 +19,12 @@ from typing import Optional
 
 from PIL import Image, ImageTk
 
-from . import ocr
+from . import logging_setup, ocr
 from .mokuro import TextBlock
 from .special_chars import SpecialCharButton
 from .text_render import render_text
+
+_log = logging_setup.get_logger("edit_dialog")
 
 # Size of the comparison preview panes (px).
 _PREVIEW = 220
@@ -220,9 +222,15 @@ class EditBlockDialog(tk.Toplevel):
         self._ocr_button.config(state=tk.DISABLED)
         self.config(cursor="watch")
         self.update_idletasks()
+        _log.info(
+            "Running OCR (%s) with %s",
+            "vertical" if self._vertical_var.get() else "horizontal",
+            ocr.get_method(),
+        )
         try:
             lines = ocr.recognize(crop, vertical=self._vertical_var.get())
         except Exception as exc:  # pragma: no cover - runtime/engine errors
+            _log.error("OCR failed: %s", exc)
             messagebox.showerror(
                 "OCR failed", f"OCR failed:\n{exc}", parent=self
             )
@@ -233,10 +241,13 @@ class EditBlockDialog(tk.Toplevel):
                 self._ocr_button.config(state=tk.NORMAL)
 
         if not lines:
+            _log.info("OCR found no text in this region")
             messagebox.showinfo(
                 "OCR", "No text was detected in this region.", parent=self
             )
             return
+
+        _log.info("OCR result: %r", lines)
 
         self._text.delete("1.0", "end")
         self._text.insert("1.0", "\n".join(lines))

@@ -13,7 +13,7 @@ from .edit_dialog import EditBlockDialog
 from .find_dialog import FindDialog
 from .split_dialog import SplitDialog
 from .icons import get_icon
-from . import ocr
+from . import logging_setup, ocr
 from .mokuro import MokuroData
 from .page_list import PageList
 from .page_source import FolderSource, PageSource
@@ -32,6 +32,8 @@ try:
 except Exception:  # noqa: BLE001 - any import/runtime issue disables DnD
     _TkBase = tk.Tk
     _DND_AVAILABLE = False
+
+_log = logging_setup.get_logger("app")
 
 
 class MoguraApp(_TkBase):
@@ -619,9 +621,11 @@ class MoguraApp(_TkBase):
 
     def _load_mokuro(self, path: str, silent_errors: bool = False) -> bool:
         """Load a mokuro file and refresh the text view. Returns success."""
+        _log.info("Loading mokuro: %s", path)
         try:
             mokuro = MokuroData.load(path)
         except Exception as exc:  # noqa: BLE001
+            _log.error("Failed to load mokuro %s: %s", path, exc)
             if not silent_errors:
                 messagebox.showerror("Failed to open Mokuro", str(exc))
             return False
@@ -633,6 +637,11 @@ class MoguraApp(_TkBase):
         if self._current_page >= 0:
             self._update_text_for_page(self._current_page)
         self._update_text_counts()
+        _log.info(
+            "Loaded mokuro '%s' (%d pages)",
+            mokuro.volume or os.path.basename(path),
+            len(mokuro.pages),
+        )
         self._status.config(
             text=f"Loaded mokuro: {mokuro.volume or os.path.basename(path)} "
             f"({len(mokuro.pages)} pages)"
@@ -662,9 +671,11 @@ class MoguraApp(_TkBase):
         try:
             archive.write_mokuro(self._mokuro.to_json())
         except Exception as exc:  # noqa: BLE001
+            _log.error("Failed to save mokuro into CBZ %s: %s", archive.path, exc)
             messagebox.showerror("Failed to save into CBZ", str(exc))
             return False
         self._set_dirty(False)
+        _log.info("Saved mokuro into CBZ: %s", archive.path)
         self._status.config(text=f"Saved mokuro into {os.path.basename(archive.path)}")
         return True
 
@@ -700,10 +711,12 @@ class MoguraApp(_TkBase):
         try:
             self._mokuro.save(path)
         except Exception as exc:  # noqa: BLE001
+            _log.error("Failed to save mokuro %s: %s", path, exc)
             messagebox.showerror("Failed to save Mokuro", str(exc))
             return False
         self._remember_dir(path)
         self._set_dirty(False)
+        _log.info("Saved mokuro: %s", path)
         self._status.config(text=f"Saved: {path}")
         return True
 
@@ -916,9 +929,11 @@ class MoguraApp(_TkBase):
         return candidate if os.path.isfile(candidate) else None
 
     def _load_source(self, factory, path: str, error_title: str) -> None:
+        _log.info("Opening source: %s", path)
         try:
             source = factory()
         except Exception as exc:  # noqa: BLE001 - present any failure to user
+            _log.error("Failed to open source %s: %s", path, exc)
             messagebox.showerror(f"Failed to {error_title.lower()}", str(exc))
             return
 
@@ -926,6 +941,7 @@ class MoguraApp(_TkBase):
             self._archive.close()
         self._archive = source
         self._source_path = path
+        _log.info("Opened source with %d page(s)", source.page_count)
         # A new source invalidates any previously loaded text.
         self._mokuro = None
         self._mokuro_in_cbz = False
@@ -1218,20 +1234,29 @@ class MoguraApp(_TkBase):
             )
             return
 
+        _log.info(
+            "Running OCR on item %d (%s) with %s",
+            index + 1,
+            "vertical" if block.vertical else "horizontal",
+            ocr.get_method(),
+        )
         self.config(cursor="watch")
         self.update_idletasks()
         try:
             lines = ocr.recognize(crop, vertical=block.vertical)
         except Exception as exc:  # noqa: BLE001 - runtime/engine errors
+            _log.error("OCR failed on item %d: %s", index + 1, exc)
             messagebox.showerror("OCR failed", f"OCR failed:\n{exc}")
             return
         finally:
             self.config(cursor="")
 
         if not lines:
+            _log.info("OCR found no text in item %d", index + 1)
             messagebox.showinfo("OCR", "No text was detected in this region.")
             return
 
+        _log.info("OCR result for item %d: %r", index + 1, lines)
         block.lines = lines
         self._mark_dirty()
         self._text_panel.refresh()
@@ -1433,6 +1458,8 @@ class MoguraApp(_TkBase):
 
 
 def main() -> None:
+    logging_setup.configure()
+    logging_setup.log_system_checks()
     app = MoguraApp()
     app.mainloop()
 
