@@ -22,6 +22,7 @@ from .page_view import PageView
 from .settings import Settings
 from .settings_dialog import SettingsDialog
 from .text_panel import TextPanel
+from . import text_render
 from .tooltip import add_tooltip
 
 # Optional drag-and-drop support via tkinterdnd2. If unavailable, the app runs
@@ -71,6 +72,10 @@ class MoguraApp(_TkBase):
         # black) instead of the page image. Masks are cached by page name.
         self._mask_mode = False
         self._mask_cache: dict = {}
+
+        # When True, an approximate render of each block's text is overlaid on
+        # the page image, so the typed/OCR'd text can be compared in place.
+        self._overlay_mode = False
 
         # Find/replace state: the open dialog (if any) and the current match
         # position, tracked as (page_index, block_index, char_offset).
@@ -229,6 +234,12 @@ class MoguraApp(_TkBase):
             variable=self._mask_var,
             command=self._on_mask_menu_toggle,
         )
+        self._overlay_var = tk.BooleanVar(value=False)
+        view_menu.add_checkbutton(
+            label="Show Rendered Text Overlay",
+            variable=self._overlay_var,
+            command=self._on_overlay_menu_toggle,
+        )
         menubar.add_cascade(label="View", menu=view_menu)
 
         settings_menu = tk.Menu(menubar, tearoff=0)
@@ -338,6 +349,10 @@ class MoguraApp(_TkBase):
             toolbar, "seg_mask", "◼", self.toggle_mask,
             "Toggle Segmentation Mask",
         )
+        self._overlay_btn = self._toolbar_button(
+            toolbar, "overlay", "A", self.toggle_overlay,
+            "Toggle Rendered Text Overlay",
+        )
 
         # Segmentation section: detect text blocks on the current page.
         tk.Frame(toolbar, width=1, bg="#c0c0c0").pack(
@@ -358,6 +373,7 @@ class MoguraApp(_TkBase):
         self._set_toggle_active(self._boxes_btn, self._boxes_var.get())
         self._set_toggle_active(self._order_btn, self._order_var.get())
         self._set_toggle_active(self._mask_btn, self._mask_var.get())
+        self._set_toggle_active(self._overlay_btn, self._overlay_var.get())
 
         # Zoom level indicator, docked to the far right. Clicking it toggles
         # between 100% and fit-to-window.
@@ -517,23 +533,73 @@ class MoguraApp(_TkBase):
         self._set_toggle_active(self._mask_btn, want)
         self._refresh_displayed_image()
 
+    # --------------------------------------------------- rendered text overlay
+    def toggle_overlay(self) -> None:
+        """Toggle the rendered-text overlay (from the toolbar button)."""
+        self._overlay_var.set(not self._overlay_var.get())
+        self._apply_overlay_mode()
+
+    def _on_overlay_menu_toggle(self) -> None:
+        """Handle the View menu checkbutton (already flipped the var)."""
+        self._apply_overlay_mode()
+
+    def _apply_overlay_mode(self) -> None:
+        """Turn the rendered-text overlay on or off and refresh the view."""
+        self._overlay_mode = self._overlay_var.get()
+        self._set_toggle_active(self._overlay_btn, self._overlay_mode)
+        self._refresh_displayed_image()
+
     def _refresh_displayed_image(self) -> None:
-        """Show either the page image or its segmentation mask in the view."""
+        """Show the current page in the view, honoring the active view toggles.
+
+        The base is either the page image or (in mask mode) its segmentation
+        mask; the rendered-text overlay, when enabled, is composited on top.
+        """
         if self._current_image is None:
             return
-        if not self._mask_mode:
-            self._center.show_image(self._current_image)
-            return
-        try:
-            mask = self._mask_for_current_page()
-        except Exception as exc:  # noqa: BLE001
-            self._mask_mode = False
-            self._mask_var.set(False)
-            self._set_toggle_active(self._mask_btn, False)
-            messagebox.showerror("Segmentation failed", str(exc))
-            self._center.show_image(self._current_image)
-            return
-        self._center.show_image(mask)
+        if self._mask_mode:
+            try:
+                base = self._mask_for_current_page()
+            except Exception as exc:  # noqa: BLE001
+                self._mask_mode = False
+                self._mask_var.set(False)
+                self._set_toggle_active(self._mask_btn, False)
+                messagebox.showerror("Segmentation failed", str(exc))
+                base = self._current_image
+        else:
+            base = self._current_image
+        if self._overlay_mode:
+            base = self._compose_text_overlay(base)
+        self._center.show_image(base)
+
+    def _compose_text_overlay(self, base):
+        """Return ``base`` with each block's text rendered over its box.
+
+        Falls back to ``base`` unchanged if there is no text data for the page.
+        """
+        if self._mokuro is None or self._archive is None:
+            return base
+        page = self._mokuro.page_for(self._archive.page_name(self._current_page))
+        if page is None or not page.blocks:
+            return base
+        composed = base.convert("RGBA")
+        iw, ih = composed.size
+        for block in page.blocks:
+            box = (list(block.box) + [0, 0, 0, 0])[:4]
+            x1, y1, x2, y2 = box
+            x1 = max(0, min(iw, int(x1))); x2 = max(0, min(iw, int(x2)))
+            y1 = max(0, min(ih, int(y1))); y2 = max(0, min(ih, int(y2)))
+            w, h = x2 - x1, y2 - y1
+            if w < 1 or h < 1:
+                continue
+            lines = [ln for ln in block.lines if ln != ""]
+            if not lines:
+                continue
+            overlay = text_render.render_text_rgba(
+                block.lines, block.vertical, w, h, fg="#e53935"
+            )
+            composed.alpha_composite(overlay, dest=(x1, y1))
+        return composed.convert("RGB")
 
     def _mask_for_current_page(self):
         """Return the segmentation mask image for the current page (cached)."""
@@ -1125,7 +1191,7 @@ class MoguraApp(_TkBase):
         self._text_panel.commit_pending()
         self._current_page = index
         self._current_image = image
-        if self._mask_mode:
+        if self._mask_mode or self._overlay_mode:
             self._refresh_displayed_image()
         else:
             self._center.show_image(image)
@@ -1216,6 +1282,9 @@ class MoguraApp(_TkBase):
         self._text_panel.show_page(page)
         self._center.set_boxes([b.box for b in page.blocks] if page else [])
         self._refresh_overlaps(page)
+        # Keep the rendered-text overlay in step with the current text.
+        if self._overlay_mode:
+            self._refresh_displayed_image()
 
     def _overlap_threshold(self) -> float:
         """Current overlap threshold (0..1) from settings, clamped."""
@@ -1644,6 +1713,8 @@ class MoguraApp(_TkBase):
         self._center.set_selected_box(self._text_panel.selected_index)
         self._update_text_counts()
         self._refresh_overlaps(page)
+        if self._overlay_mode:
+            self._refresh_displayed_image()
 
     # ------------------------------------------------------------ find/replace
     def open_find(self) -> None:
