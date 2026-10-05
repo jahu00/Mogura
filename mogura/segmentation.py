@@ -254,8 +254,13 @@ def _infer(image: Image.Image):
     return blk, mask, ratio
 
 
-def _decode_boxes(blk, ratio, size) -> List[List[int]]:
-    """Decode the raw ``blk`` detections into sorted integer boxes."""
+def _decode_boxes(blk, ratio, size, right_to_left: bool = True) -> List[List[int]]:
+    """Decode the raw ``blk`` detections into sorted integer boxes.
+
+    ``right_to_left`` selects the reading-order layout: True (default) orders
+    blocks for manga (top-to-bottom, right-to-left); False orders them for
+    Western comics (top-to-bottom, left-to-right).
+    """
     import numpy as np
 
     pred = blk[0]  # (N, 7): cx, cy, w, h, obj_conf, cls0, cls1
@@ -286,21 +291,79 @@ def _decode_boxes(blk, ratio, size) -> List[List[int]]:
         result.append([int(round(x1)), int(round(y1)),
                        int(round(x2)), int(round(y2))])
 
-    # Reading order: top-to-bottom, then left-to-right.
-    result.sort(key=lambda b: (b[1], b[0]))
+    return _reading_order(result, right_to_left)
+
+
+def _reading_order(
+    boxes: List[List[int]], right_to_left: bool = True
+) -> List[List[int]]:
+    """Sort ``boxes`` into reading order: top-to-bottom, then across a band.
+
+    The model gives us no sequencing information, so we impose a reading order
+    ourselves. Comics flow down a column of panels and, within a horizontal
+    band, across the page: right-to-left for manga (``right_to_left=True``) or
+    left-to-right for Western comics (``right_to_left=False``).
+
+    We approximate this by grouping boxes into horizontal *bands* (rows of
+    panels) from the top of the page down: a box joins the current band if it
+    overlaps that band vertically by a meaningful fraction, otherwise it opens
+    a new band below. Within each band the boxes are read across in the chosen
+    direction by their horizontal centre. This keeps a leading speech bubble
+    ahead of a trailing one on the same tier, while still reading an upper tier
+    of panels before a lower one.
+    """
+    if not boxes:
+        return []
+
+    # Fraction of the shorter box height that must overlap vertically for two
+    # boxes to be considered part of the same horizontal band.
+    band_overlap = 0.5
+
+    # Seed bands from boxes ordered by their top edge (then taller first so a
+    # band is anchored by its largest member).
+    ordered = sorted(boxes, key=lambda b: (b[1], -(b[3] - b[1])))
+
+    bands: List[dict] = []
+    for box in ordered:
+        x1, y1, x2, y2 = box
+        placed = False
+        for band in bands:
+            top = max(y1, band["top"])
+            bottom = min(y2, band["bottom"])
+            overlap = bottom - top
+            shorter = min(y2 - y1, band["bottom"] - band["top"])
+            if shorter > 0 and overlap >= band_overlap * shorter:
+                band["boxes"].append(box)
+                band["top"] = min(band["top"], y1)
+                band["bottom"] = max(band["bottom"], y2)
+                placed = True
+                break
+        if not placed:
+            bands.append({"top": y1, "bottom": y2, "boxes": [box]})
+
+    bands.sort(key=lambda band: band["top"])
+
+    result: List[List[int]] = []
+    sign = -1 if right_to_left else 1
+    for band in bands:
+        # Read across the band by horizontal centre, in the chosen direction.
+        band["boxes"].sort(key=lambda b: sign * (b[0] + b[2]))
+        result.extend(band["boxes"])
     return result
 
 
-def detect(image: Image.Image) -> List[List[int]]:
+def detect(image: Image.Image, right_to_left: bool = True) -> List[List[int]]:
     """Detect text-block bounding boxes on ``image``.
 
     Returns a list of ``[x1, y1, x2, y2]`` integer boxes in the coordinate
-    space of the input image, sorted top-to-bottom then left-to-right. Returns
-    an empty list if nothing is detected. Raises if segmentation is unavailable
-    or the engine fails; callers should guard with :func:`is_available`.
+    space of the input image, in reading order (top-to-bottom, then
+    right-to-left for manga or left-to-right when ``right_to_left`` is False).
+    Returns an empty list if nothing is detected. Raises if segmentation is
+    unavailable or the engine fails; callers should guard with
+    :func:`is_available`.
     """
     blk, _mask, ratio = _infer(image)
-    return _decode_boxes(blk, ratio, image.size)
+    return _decode_boxes(blk, ratio, image.size, right_to_left)
 
 
 def mask_image(image: Image.Image) -> Image.Image:
@@ -380,7 +443,7 @@ def mask_crop(image: Image.Image, box=None) -> Optional[Image.Image]:
     return mask.crop((x1, y1, x2, y2))
 
 
-def detect_and_clean(image: Image.Image):
+def detect_and_clean(image: Image.Image, right_to_left: bool = True):
     """Return ``(boxes, cleaned_image)`` from a single inference pass.
 
     Convenience for whole-page segmentation that also wants the mask-cleaned
@@ -389,12 +452,12 @@ def detect_and_clean(image: Image.Image):
     ``cleaned_image`` is the full page with non-text whitened out.
     """
     blk, mask, ratio = _infer(image)
-    boxes = _decode_boxes(blk, ratio, image.size)
+    boxes = _decode_boxes(blk, ratio, image.size, right_to_left)
     cleaned = _clean_with_mask(image, mask)
     return boxes, cleaned
 
 
-def detect_and_mask(image: Image.Image):
+def detect_and_mask(image: Image.Image, right_to_left: bool = True):
     """Return ``(boxes, mask_image)`` from a single inference pass.
 
     Like :func:`detect_and_clean`, but the second element is the raw text
@@ -405,6 +468,6 @@ def detect_and_mask(image: Image.Image):
     import numpy as np
 
     blk, mask, ratio = _infer(image)
-    boxes = _decode_boxes(blk, ratio, image.size)
+    boxes = _decode_boxes(blk, ratio, image.size, right_to_left)
     arr = (np.clip(mask, 0.0, 1.0) * 255).astype(np.uint8)
     return boxes, Image.fromarray(arr, mode="L")

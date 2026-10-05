@@ -39,6 +39,9 @@ _DEFAULTS: Dict[str, Any] = {
     #   "mask"  - OCR the raw segmentation mask (white text on black). Polarity
     #             independent, so it copes with white-on-black text.
     "ocr_segmentation_mode": "apply",
+    # Reading-order layout for detected segmentation blocks. True orders blocks
+    # right-to-left (manga); False orders them left-to-right (Western comics).
+    "segmentation_rtl": True,
 }
 
 

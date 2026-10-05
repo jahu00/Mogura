@@ -1429,6 +1429,10 @@ class MoguraApp(_TkBase):
         mode = self._settings.get("ocr_segmentation_mode")
         return "mask" if mode == "mask" else "apply"
 
+    def _segmentation_rtl(self) -> bool:
+        """Reading-order layout for detected blocks: True = right-to-left."""
+        return bool(self._settings.get("segmentation_rtl"))
+
     def _apply_segmentation_to_crop(self, block):
         """Return the OCR crop for ``block`` prepared via segmentation.
 
@@ -1534,17 +1538,20 @@ class MoguraApp(_TkBase):
         self.update_idletasks()
         cleaned_page = None
         try:
+            rtl = self._segmentation_rtl()
             if want_clean:
                 if self._ocr_segmentation_mode() == "mask":
                     boxes, cleaned_page = segmentation.detect_and_mask(
-                        self._current_image
+                        self._current_image, right_to_left=rtl
                     )
                 else:
                     boxes, cleaned_page = segmentation.detect_and_clean(
-                        self._current_image
+                        self._current_image, right_to_left=rtl
                     )
             else:
-                boxes = segmentation.detect(self._current_image)
+                boxes = segmentation.detect(
+                    self._current_image, right_to_left=rtl
+                )
         except Exception as exc:  # noqa: BLE001 - runtime/engine errors
             _log.error("Segmentation failed: %s", exc)
             messagebox.showerror(

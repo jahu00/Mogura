@@ -272,6 +272,46 @@ class SettingsDialog(tk.Toplevel):
 
         self._refresh_segmentation_status()
 
+        # Reading-order layout for detected blocks.
+        ttk.Separator(parent, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(16, 10))
+        tk.Label(
+            parent,
+            text="Reading order of detected blocks:",
+            anchor=tk.W,
+        ).pack(fill=tk.X)
+
+        self._seg_rtl_var = tk.BooleanVar(
+            value=bool(self._settings.get("segmentation_rtl"))
+        )
+        tk.Radiobutton(
+            parent,
+            text="Right-to-left (manga)",
+            variable=self._seg_rtl_var,
+            value=True,
+            anchor=tk.W,
+            command=self._on_seg_rtl,
+        ).pack(fill=tk.X, pady=(8, 0))
+        tk.Radiobutton(
+            parent,
+            text="Left-to-right (Western comics)",
+            variable=self._seg_rtl_var,
+            value=False,
+            anchor=tk.W,
+            command=self._on_seg_rtl,
+        ).pack(fill=tk.X, pady=(4, 0))
+        tk.Label(
+            parent,
+            text="Blocks are always read top-to-bottom; this only sets the "
+            "horizontal direction within each row of panels.",
+            anchor=tk.W,
+            fg="#666666",
+            wraplength=340,
+            justify=tk.LEFT,
+        ).pack(fill=tk.X, pady=(6, 0))
+
+    def _on_seg_rtl(self) -> None:
+        self._settings.set("segmentation_rtl", bool(self._seg_rtl_var.get()))
+
     def _seg_add_status_row(self, parent, label: str, ok: bool) -> None:
         row = tk.Frame(parent)
         row.pack(fill=tk.X, pady=1)

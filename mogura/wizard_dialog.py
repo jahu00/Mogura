@@ -329,13 +329,18 @@ class WizardDialog(tk.Toplevel):
 
                 # Detect (optionally also getting a prepared page for OCR:
                 # either the mask-cleaned image or the raw mask).
+                rtl = app._segmentation_rtl()
                 prepared = None
                 if options["run_ocr"] and options["ocr_source"] == _SRC_SEGMENTED:
-                    boxes, prepared = segmentation.detect_and_clean(image)
+                    boxes, prepared = segmentation.detect_and_clean(
+                        image, right_to_left=rtl
+                    )
                 elif options["run_ocr"] and options["ocr_source"] == _SRC_MASK:
-                    boxes, prepared = segmentation.detect_and_mask(image)
+                    boxes, prepared = segmentation.detect_and_mask(
+                        image, right_to_left=rtl
+                    )
                 else:
-                    boxes = segmentation.detect(image)
+                    boxes = segmentation.detect(image, right_to_left=rtl)
 
                 # Decide how to merge with any existing blocks.
                 existing_boxes = []
