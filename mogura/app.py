@@ -21,6 +21,7 @@ from .page_view import PageView
 from .settings import Settings
 from .settings_dialog import SettingsDialog
 from .text_panel import TextPanel
+from .tooltip import add_tooltip
 
 # Optional drag-and-drop support via tkinterdnd2. If unavailable, the app runs
 # normally without the drop feature.
@@ -261,6 +262,8 @@ class MoguraApp(_TkBase):
                 font=("TkDefaultFont", 14),
             )
         btn.pack(side=tk.LEFT, padx=2, pady=2)
+        if tooltip:
+            add_tooltip(btn, tooltip)
         # Remember the default look so toggle styling can be undone.
         btn._default_relief = btn.cget("relief")
         btn._default_bg = btn.cget("background")
@@ -329,6 +332,7 @@ class MoguraApp(_TkBase):
         )
         self._zoom_label.pack(side=tk.RIGHT, padx=4, pady=2)
         self._zoom_label.bind("<Button-1>", lambda _e: self.toggle_zoom())
+        add_tooltip(self._zoom_label, "Toggle zoom (100% / fit)")
 
         self._toolbar = toolbar
 

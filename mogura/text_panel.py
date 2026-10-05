@@ -8,6 +8,7 @@ from typing import Callable, List, Optional
 from . import ocr
 from .icons import get_icon
 from .mokuro import MokuroPage, TextBlock
+from .tooltip import add_tooltip
 
 
 class TextPanel(tk.Frame):
@@ -116,7 +117,7 @@ class TextPanel(tk.Frame):
         for group_index, group in enumerate(groups):
             if group_index > 0:
                 self._add_separator(bar)
-            for icon_name, fallback, command, _tip in group:
+            for icon_name, fallback, command, tip in group:
                 photo = get_icon(icon_name, size=18)
                 if photo is not None:
                     btn = tk.Button(bar, image=photo, command=command)
@@ -127,6 +128,8 @@ class TextPanel(tk.Frame):
                         font=("TkDefaultFont", 11),
                     )
                 btn.pack(side=tk.LEFT, padx=2, pady=2)
+                if tip:
+                    add_tooltip(btn, tip)
                 # Remember the default look so toggle styling can be undone.
                 btn._default_relief = btn.cget("relief")
                 btn._default_bg = btn.cget("background")
