@@ -67,6 +67,11 @@ class MoguraApp(_TkBase):
         self._left_visible = True
         self._right_visible = True
 
+        # When True, the center view shows the segmentation mask (white text on
+        # black) instead of the page image. Masks are cached by page name.
+        self._mask_mode = False
+        self._mask_cache: dict = {}
+
         # Find/replace state: the open dialog (if any) and the current match
         # position, tracked as (page_index, block_index, char_offset).
         self._find_dialog: Optional[FindDialog] = None
@@ -218,6 +223,12 @@ class MoguraApp(_TkBase):
             variable=self._order_var,
             command=self._on_order_menu_toggle,
         )
+        self._mask_var = tk.BooleanVar(value=False)
+        view_menu.add_checkbutton(
+            label="Show Segmentation Mask",
+            variable=self._mask_var,
+            command=self._on_mask_menu_toggle,
+        )
         menubar.add_cascade(label="View", menu=view_menu)
 
         settings_menu = tk.Menu(menubar, tearoff=0)
@@ -323,6 +334,10 @@ class MoguraApp(_TkBase):
         self._order_btn = self._toolbar_button(
             toolbar, "order", "①", self.toggle_order, "Toggle Text Order"
         )
+        self._mask_btn = self._toolbar_button(
+            toolbar, "seg_mask", "◼", self.toggle_mask,
+            "Toggle Segmentation Mask",
+        )
 
         # Segmentation section: detect text blocks on the current page.
         tk.Frame(toolbar, width=1, bg="#c0c0c0").pack(
@@ -342,6 +357,7 @@ class MoguraApp(_TkBase):
         self._set_toggle_active(self._text_btn, self._right_visible)
         self._set_toggle_active(self._boxes_btn, self._boxes_var.get())
         self._set_toggle_active(self._order_btn, self._order_var.get())
+        self._set_toggle_active(self._mask_btn, self._mask_var.get())
 
         # Zoom level indicator, docked to the far right. Clicking it toggles
         # between 100% and fit-to-window.
@@ -475,6 +491,61 @@ class MoguraApp(_TkBase):
     def _apply_order_visibility(self) -> None:
         self._center.set_order_visible(self._order_var.get())
         self._set_toggle_active(self._order_btn, self._order_var.get())
+
+    # ------------------------------------------------------ segmentation mask
+    def toggle_mask(self) -> None:
+        """Toggle the segmentation-mask view (from the toolbar button)."""
+        self._mask_var.set(not self._mask_var.get())
+        self._apply_mask_mode()
+
+    def _on_mask_menu_toggle(self) -> None:
+        """Handle the View menu checkbutton (already flipped the var)."""
+        self._apply_mask_mode()
+
+    def _apply_mask_mode(self) -> None:
+        """Switch the center view between the page image and its mask."""
+        want = self._mask_var.get()
+        if want and not segmentation.is_available():
+            self._mask_var.set(False)
+            self._set_toggle_active(self._mask_btn, False)
+            messagebox.showinfo(
+                "Segmentation unavailable",
+                segmentation.unavailable_reason(),
+            )
+            return
+        self._mask_mode = want
+        self._set_toggle_active(self._mask_btn, want)
+        self._refresh_displayed_image()
+
+    def _refresh_displayed_image(self) -> None:
+        """Show either the page image or its segmentation mask in the view."""
+        if self._current_image is None:
+            return
+        if not self._mask_mode:
+            self._center.show_image(self._current_image)
+            return
+        try:
+            mask = self._mask_for_current_page()
+        except Exception as exc:  # noqa: BLE001
+            self._mask_mode = False
+            self._mask_var.set(False)
+            self._set_toggle_active(self._mask_btn, False)
+            messagebox.showerror("Segmentation failed", str(exc))
+            self._center.show_image(self._current_image)
+            return
+        self._center.show_image(mask)
+
+    def _mask_for_current_page(self):
+        """Return the segmentation mask image for the current page (cached)."""
+        key = self._archive.page_name(self._current_page)
+        cached = self._mask_cache.get(key)
+        if cached is None:
+            self._status.config(text="Computing segmentation mask...")
+            self.update_idletasks()
+            cached = segmentation.mask_image(self._current_image)
+            self._mask_cache[key] = cached
+            self._status.config(text=f"Segmentation mask: {os.path.basename(key)}")
+        return cached
 
     # ------------------------------------------------------- box move/resize
     def toggle_box_edit(self) -> None:
@@ -983,6 +1054,8 @@ class MoguraApp(_TkBase):
             self._archive.close()
         self._archive = source
         self._source_path = path
+        # A new source invalidates cached segmentation masks.
+        self._mask_cache.clear()
         _log.info("Opened source with %d page(s)", source.page_count)
         # A new source invalidates any previously loaded text.
         self._mokuro = None
@@ -1052,7 +1125,10 @@ class MoguraApp(_TkBase):
         self._text_panel.commit_pending()
         self._current_page = index
         self._current_image = image
-        self._center.show_image(image)
+        if self._mask_mode:
+            self._refresh_displayed_image()
+        else:
+            self._center.show_image(image)
         self._page_list.set_selected(index)
         self._update_text_for_page(index)
         self._status.config(
@@ -1339,10 +1415,13 @@ class MoguraApp(_TkBase):
         return image.crop((x1, y1, x2, y2)).convert("RGB")
 
     def _use_ocr_segmentation(self) -> bool:
-        """True if OCR should clean regions with the segmentation mask first."""
-        return bool(
-            self._settings.get("ocr_use_segmentation")
-        ) and segmentation.is_available()
+        """True if OCR should clean regions with the segmentation mask first.
+
+        This follows the main view's Segmentation Mask toggle: when the mask is
+        shown, OCR recognizes from the mask-cleaned imagery; otherwise it uses
+        the original image.
+        """
+        return self._mask_mode and segmentation.is_available()
 
     # ------------------------------------------------------------- wizard
     def open_wizard(self) -> None:
@@ -1421,7 +1500,7 @@ class MoguraApp(_TkBase):
         # the mask-cleaned page in the same inference pass so each block can be
         # recognized from the clean image without re-running the model per box.
         want_clean = (
-            bool(self._settings.get("ocr_use_segmentation"))
+            self._use_ocr_segmentation()
             and bool(self._settings.get("auto_ocr_on_add"))
             and ocr.is_available()
         )

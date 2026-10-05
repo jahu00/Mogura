@@ -303,6 +303,21 @@ def detect(image: Image.Image) -> List[List[int]]:
     return _decode_boxes(blk, ratio, image.size)
 
 
+def mask_image(image: Image.Image) -> Image.Image:
+    """Return the text-segmentation mask for ``image`` as a grayscale image.
+
+    The result is a single-channel (``"L"``) image the same size as ``image``,
+    with detected text drawn white on a black background. Raises if
+    segmentation is unavailable or the engine fails; callers should guard with
+    :func:`is_available`.
+    """
+    import numpy as np
+
+    _blk, mask, _ratio = _infer(image)
+    arr = (np.clip(mask, 0.0, 1.0) * 255).astype(np.uint8)
+    return Image.fromarray(arr, mode="L")
+
+
 def _clean_with_mask(image: Image.Image, mask) -> Image.Image:
     """Return ``image`` with everything but detected text whitened out.
 

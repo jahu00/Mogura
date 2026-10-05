@@ -153,7 +153,7 @@ class WizardDialog(tk.Toplevel):
         self._src_label.pack(side=tk.LEFT)
         default_src = (
             _SRC_SEGMENTED
-            if self._settings.get("ocr_use_segmentation")
+            if getattr(self._app, "_mask_mode", False)
             else _SRC_ORIGINAL
         )
         self._src_var = tk.StringVar(value=default_src)
