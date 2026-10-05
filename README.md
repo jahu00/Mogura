@@ -105,6 +105,15 @@ or
   out surrounding artwork and screentones, which can improve recognition on
   busy backgrounds. Whole-page segmentation reuses a single cleaned page for
   all its blocks; manual single-block OCR cleans just that block's region.
+- **Auto-process the whole document (wizard)**: the 🪄 toolbar button opens a
+  wizard that segments every page and adds a text block per detected region,
+  optionally OCR'ing each one. Options (independent of the global settings):
+  skip pages that already have text; when not skipping, choose how to handle
+  annotated pages (*Overwrite* the page, or *Add only non-overlapping blocks*
+  using the overlap threshold); whether to run OCR; which OCR engine; and
+  whether to OCR from the original or a segmentation-cleaned image. A progress
+  bar tracks the run, which you confirm before it starts and can cancel while
+  it runs.
 - **Move / resize a box**: select a text item, then press the move/resize button
   in the Text panel toolbar. The selected box gains drag handles — drag a handle
   to resize, or drag inside the box to move it. The mode turns off when you press

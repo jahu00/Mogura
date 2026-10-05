@@ -34,6 +34,11 @@ class PageView(tk.Frame):
     DRAW_COLOR = "#00e676"
     DRAW_WIDTH = 2
 
+    # Order-number labels drawn at each box's corner.
+    ORDER_FILL = "#ffffff"
+    ORDER_BG = "#00b0ff"
+    ORDER_FONT = ("TkDefaultFont", 10, "bold")
+
     # Box-edit (move/resize) handles.
     HANDLE_HALF = 4       # half-size of a handle square, in canvas px
     HANDLE_HIT = 8        # hit tolerance around a handle, in canvas px
@@ -96,6 +101,8 @@ class PageView(tk.Frame):
         self._box_ids: list = []
         self._selected_box: Optional[int] = None
         self._boxes_visible: bool = True
+        self._order_visible: bool = False
+        self._order_ids: list = []
         self._on_box_selected = on_box_selected
         self._on_zoom_changed = on_zoom_changed
         self._on_box_drawn = on_box_drawn
@@ -476,6 +483,7 @@ class PageView(tk.Frame):
             self._image_id = None
             self._photo = None
             self._box_ids = []
+            self._order_ids = []
             self._logo_id = None
             self._logo_photo = None
             self._render_logo()
@@ -511,9 +519,21 @@ class PageView(tk.Frame):
     def boxes_visible(self) -> bool:
         return self._boxes_visible
 
+    def set_order_visible(self, visible: bool) -> None:
+        """Show or hide the reading-order number on each box."""
+        if visible == self._order_visible:
+            return
+        self._order_visible = visible
+        self._render_boxes()
+
+    @property
+    def order_visible(self) -> bool:
+        return self._order_visible
+
     def clear(self) -> None:
         self._boxes = []
         self._box_ids = []
+        self._clear_order_labels()
         self._selected_box = None
         self.show_image(None)
 
@@ -614,6 +634,7 @@ class PageView(tk.Frame):
         for box_id in self._box_ids:
             self.canvas.delete(box_id)
         self._box_ids = []
+        self._clear_order_labels()
 
         if not self._boxes_visible:
             return
@@ -636,6 +657,40 @@ class PageView(tk.Frame):
             self._box_ids
         ):
             self.canvas.tag_raise(self._box_ids[self._selected_box])
+
+        if self._order_visible:
+            self._render_order_labels()
+
+    def _clear_order_labels(self) -> None:
+        for item_id in self._order_ids:
+            self.canvas.delete(item_id)
+        self._order_ids = []
+
+    def _render_order_labels(self) -> None:
+        """Draw a reading-order number at the top-left corner of each box."""
+        pad = 3
+        for i, (x1, y1, x2, y2) in enumerate(self._boxes):
+            cx1, cy1 = self._image_to_canvas(x1, y1)
+            text = str(i + 1)
+            label = self.canvas.create_text(
+                cx1 + pad,
+                cy1 + pad,
+                text=text,
+                anchor=tk.NW,
+                fill=self.ORDER_FILL,
+                font=self.ORDER_FONT,
+            )
+            bbox = self.canvas.bbox(label)
+            bg = self.canvas.create_rectangle(
+                bbox[0] - pad,
+                bbox[1] - 1,
+                bbox[2] + pad,
+                bbox[3] + 1,
+                fill=self.ORDER_BG,
+                outline="",
+            )
+            self.canvas.tag_lower(bg, label)
+            self._order_ids.extend([bg, label])
 
     def _restyle_boxes(self) -> None:
         """Update only the outline style of existing boxes (no re-layout)."""

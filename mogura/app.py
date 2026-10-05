@@ -12,6 +12,7 @@ from .combine_dialog import CombineDialog
 from .edit_dialog import EditBlockDialog
 from .find_dialog import FindDialog
 from .split_dialog import SplitDialog
+from .wizard_dialog import WizardDialog
 from .icons import get_icon
 from . import logging_setup, ocr, segmentation
 from .mokuro import MokuroData, TextBlock
@@ -211,6 +212,12 @@ class MoguraApp(_TkBase):
             variable=self._boxes_var,
             command=self._on_boxes_menu_toggle,
         )
+        self._order_var = tk.BooleanVar(value=False)
+        view_menu.add_checkbutton(
+            label="Show Text Order",
+            variable=self._order_var,
+            command=self._on_order_menu_toggle,
+        )
         menubar.add_cascade(label="View", menu=view_menu)
 
         settings_menu = tk.Menu(menubar, tearoff=0)
@@ -313,6 +320,9 @@ class MoguraApp(_TkBase):
         self._boxes_btn = self._toolbar_button(
             toolbar, "bounding", "⬚", self.toggle_boxes, "Toggle Bounding Boxes"
         )
+        self._order_btn = self._toolbar_button(
+            toolbar, "order", "①", self.toggle_order, "Toggle Text Order"
+        )
 
         # Segmentation section: detect text blocks on the current page.
         tk.Frame(toolbar, width=1, bg="#c0c0c0").pack(
@@ -322,11 +332,16 @@ class MoguraApp(_TkBase):
             toolbar, "segmentation", "▦", self.segment_page,
             "Auto-detect text blocks on this page",
         )
+        self._wizard_btn = self._toolbar_button(
+            toolbar, "wizard", "🪄", self.open_wizard,
+            "Auto-process the whole document",
+        )
 
         # Reflect the initial on/off state of the toggle buttons.
         self._set_toggle_active(self._pages_btn, self._left_visible)
         self._set_toggle_active(self._text_btn, self._right_visible)
         self._set_toggle_active(self._boxes_btn, self._boxes_var.get())
+        self._set_toggle_active(self._order_btn, self._order_var.get())
 
         # Zoom level indicator, docked to the far right. Clicking it toggles
         # between 100% and fit-to-window.
@@ -446,6 +461,20 @@ class MoguraApp(_TkBase):
     def _apply_boxes_visibility(self) -> None:
         self._center.set_boxes_visible(self._boxes_var.get())
         self._set_toggle_active(self._boxes_btn, self._boxes_var.get())
+
+    # ------------------------------------------------------------- text order
+    def toggle_order(self) -> None:
+        """Toggle text-order numbers (from the toolbar button)."""
+        self._order_var.set(not self._order_var.get())
+        self._apply_order_visibility()
+
+    def _on_order_menu_toggle(self) -> None:
+        """Handle the View menu checkbutton (already flipped the var)."""
+        self._apply_order_visibility()
+
+    def _apply_order_visibility(self) -> None:
+        self._center.set_order_visible(self._order_var.get())
+        self._set_toggle_active(self._order_btn, self._order_var.get())
 
     # ------------------------------------------------------- box move/resize
     def toggle_box_edit(self) -> None:
@@ -1314,6 +1343,48 @@ class MoguraApp(_TkBase):
         return bool(
             self._settings.get("ocr_use_segmentation")
         ) and segmentation.is_available()
+
+    # ------------------------------------------------------------- wizard
+    def open_wizard(self) -> None:
+        """Open the batch-processing wizard for the whole document."""
+        if self._archive is None:
+            messagebox.showinfo(
+                "Auto-process document",
+                "Open a CBZ or image folder before running the wizard.",
+            )
+            return
+        if not segmentation.is_available():
+            messagebox.showinfo(
+                "Segmentation unavailable", segmentation.unavailable_reason()
+            )
+            return
+        # Commit any in-progress edit so the wizard sees current data.
+        self._text_panel.commit_pending()
+        dialog = WizardDialog(self, self)
+        self.wait_window(dialog)
+
+    def _on_wizard_finished(
+        self, pages_processed: int, blocks_added: int, ocr_count: int,
+        cancelled: bool,
+    ) -> None:
+        """Refresh the UI after the wizard has mutated the mokuro data."""
+        if blocks_added:
+            self._mark_dirty()
+        # Rebuild the current page's view and the per-page counts/warnings.
+        if self._current_page >= 0:
+            self._update_text_for_page(self._current_page)
+        self._update_text_counts()
+
+        prefix = "Cancelled: " if cancelled else "Auto-process complete: "
+        parts = [f"{pages_processed} page(s) processed",
+                 f"{blocks_added} block(s) added"]
+        if ocr_count:
+            parts.append(f"{ocr_count} OCR'd")
+        self._status.config(text=prefix + ", ".join(parts) + ".")
+        _log.info(
+            "Wizard finished (cancelled=%s): %d pages, %d blocks, %d OCR",
+            cancelled, pages_processed, blocks_added, ocr_count,
+        )
 
     # ------------------------------------------------------- segmentation
     def segment_page(self) -> None:
