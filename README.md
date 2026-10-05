@@ -19,6 +19,10 @@ A desktop editor for [mokuro](https://github.com/kha-white/mokuro) files built w
 - Center area: displays the selected page with drag-to-pan and mouse-wheel
   zoom. When mokuro text is loaded, each text block's bounding box is drawn over
   the page; the selected box is highlighted in a different color
+- Automatic segmentation: a toolbar button runs a text-detection model
+  (comic-text-detector, ONNX) over the current page and adds a text block for
+  each detected region, ready to OCR or type. The model is downloaded on demand
+  from Settings &gt; Segmentation
 - Right panel ("Text"): displays and edits the mokuro OCR text blocks for the
   current page (collapsible). Has its own toolbar to add, remove, and reorder
   (move up/down) text items. Adding an item prompts you to draw its rectangle
@@ -87,6 +91,12 @@ or
   fit-to-window.
 - **Toggle bounding boxes**: the ⬚ toolbar button or View menu → *Show
   Bounding Boxes* turns the text-block overlays on and off.
+- **Segment page**: the ▦ toolbar button auto-detects text blocks on the
+  current page and adds one text item per region (with empty text, so you can
+  OCR or type it). This needs the comic-text-detector ONNX model, which is not
+  bundled: open Settings → *Segmentation* to check status and download it
+  (~90 MB) with one click. The section also reports whether `onnxruntime` is
+  installed. Once present, segmentation runs locally with no network access.
 - **Move / resize a box**: select a text item, then press the move/resize button
   in the Text panel toolbar. The selected box gains drag handles — drag a handle
   to resize, or drag inside the box to move it. The mode turns off when you press
@@ -160,6 +170,7 @@ mogura/
   mokuro.py          # mokuro (.mokuro JSON) parser + serializer
   text_panel.py      # right panel: view/edit mokuro text blocks
   settings.py        # persistent user settings (JSON in ~/.config/mogura)
+  segmentation.py    # automatic text-block detection (comic-text-detector ONNX)
   page_list.py       # left panel thumbnail navigation
   page_view.py       # central pannable/zoomable page canvas
   edit_dialog.py     # detailed per-item edit dialog (text/orientation/box)

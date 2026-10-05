@@ -13,8 +13,8 @@ from .edit_dialog import EditBlockDialog
 from .find_dialog import FindDialog
 from .split_dialog import SplitDialog
 from .icons import get_icon
-from . import logging_setup, ocr
-from .mokuro import MokuroData
+from . import logging_setup, ocr, segmentation
+from .mokuro import MokuroData, TextBlock
 from .page_list import PageList
 from .page_source import FolderSource, PageSource
 from .page_view import PageView
@@ -312,6 +312,15 @@ class MoguraApp(_TkBase):
         )
         self._boxes_btn = self._toolbar_button(
             toolbar, "bounding", "⬚", self.toggle_boxes, "Toggle Bounding Boxes"
+        )
+
+        # Segmentation section: detect text blocks on the current page.
+        tk.Frame(toolbar, width=1, bg="#c0c0c0").pack(
+            side=tk.LEFT, fill=tk.Y, padx=4, pady=2
+        )
+        self._segment_btn = self._toolbar_button(
+            toolbar, "segmentation", "▦", self.segment_page,
+            "Auto-detect text blocks on this page",
         )
 
         # Reflect the initial on/off state of the toggle buttons.
@@ -1281,6 +1290,120 @@ class MoguraApp(_TkBase):
         if x2 - x1 < 1 or y2 - y1 < 1:
             return None
         return self._current_image.crop((x1, y1, x2, y2)).convert("RGB")
+
+    # ------------------------------------------------------- segmentation
+    def segment_page(self) -> None:
+        """Auto-detect text blocks on the current page and add them.
+
+        Runs the comic-text-detector model over the current page image and
+        appends a mokuro text block (empty text) for each detected region. The
+        user can then OCR or type the text, or tweak the boxes as usual.
+        """
+        if self._archive is None or self._current_image is None:
+            messagebox.showinfo(
+                "Segment page", "Open a page before running segmentation."
+            )
+            return
+        if not segmentation.is_available():
+            messagebox.showinfo(
+                "Segmentation unavailable", segmentation.unavailable_reason()
+            )
+            return
+        # Segmentation annotates mokuro data, so ensure some exists first.
+        if self._mokuro is None:
+            self._install_empty_mokuro()
+        page = self._mokuro.page_for(self._archive.page_name(self._current_page))
+        if page is None:
+            try:
+                width, height = self._current_image.size
+            except Exception:  # noqa: BLE001
+                width, height = 0, 0
+            page = self._mokuro.ensure_page(
+                self._archive.page_name(self._current_page), width, height
+            )
+
+        _log.info("Running segmentation on page %d", self._current_page + 1)
+        self.config(cursor="watch")
+        self.update_idletasks()
+        try:
+            boxes = segmentation.detect(self._current_image)
+        except Exception as exc:  # noqa: BLE001 - runtime/engine errors
+            _log.error("Segmentation failed: %s", exc)
+            messagebox.showerror(
+                "Segmentation failed", f"Segmentation failed:\n{exc}"
+            )
+            return
+        finally:
+            self.config(cursor="")
+
+        if not boxes:
+            _log.info("Segmentation found no text blocks")
+            messagebox.showinfo(
+                "Segment page", "No text blocks were detected on this page."
+            )
+            return
+
+        self._text_panel.commit_pending()
+        new_blocks = []
+        for box in boxes:
+            x1, y1, x2, y2 = box
+            vertical = (y2 - y1) > (x2 - x1)
+            block = TextBlock(
+                box=list(box), vertical=vertical, font_size=0, lines=[""]
+            )
+            page.blocks.append(block)
+            new_blocks.append(block)
+        self._mark_dirty()
+
+        # Optionally OCR each freshly detected block straight away.
+        ocr_count = 0
+        if self._settings.get("auto_ocr_on_add") and ocr.is_available():
+            ocr_count = self._ocr_blocks(new_blocks)
+
+        self._text_panel.refresh()
+        self._center.set_boxes([b.box for b in page.blocks])
+        self._update_text_counts()
+        self._refresh_overlaps(page)
+        _log.info("Segmentation added %d text block(s)", len(boxes))
+        if ocr_count:
+            self._status.config(
+                text=f"Segmentation added {len(boxes)} text block(s); "
+                f"OCR filled in {ocr_count}."
+            )
+        else:
+            self._status.config(
+                text=f"Segmentation added {len(boxes)} text block(s). "
+                "Run OCR or type the text."
+            )
+
+    def _ocr_blocks(self, blocks) -> int:
+        """Run OCR on each block in ``blocks``, filling in its text.
+
+        Intended for batch use (e.g. after segmentation): errors on individual
+        blocks are logged and skipped rather than interrupting with a dialog.
+        Returns the number of blocks that got text.
+        """
+        filled = 0
+        self.config(cursor="watch")
+        self.update_idletasks()
+        try:
+            for block in blocks:
+                crop = self._crop_block(block)
+                if crop is None:
+                    continue
+                try:
+                    lines = ocr.recognize(crop, vertical=block.vertical)
+                except Exception as exc:  # noqa: BLE001 - engine errors
+                    _log.error("OCR failed on a segmented block: %s", exc)
+                    continue
+                if lines:
+                    block.lines = lines
+                    filled += 1
+        finally:
+            self.config(cursor="")
+        if filled:
+            _log.info("OCR filled in %d segmented block(s)", filled)
+        return filled
 
     def _on_blocks_changed(self) -> None:
         """Text blocks were added/removed/reordered in the right panel."""

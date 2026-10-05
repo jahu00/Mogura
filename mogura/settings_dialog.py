@@ -14,10 +14,11 @@ Sections:
 
 from __future__ import annotations
 
+import threading
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
-from . import ocr
+from . import ocr, segmentation
 from .settings import Settings
 
 
@@ -74,6 +75,7 @@ class SettingsDialog(tk.Toplevel):
         )
 
         self._add_section("OCR", self._build_ocr_section)
+        self._add_section("Segmentation", self._build_segmentation_section)
         self._add_section("Mokuro", self._build_mokuro_section)
 
     def _add_section(self, label: str, builder) -> None:
@@ -145,6 +147,169 @@ class SettingsDialog(tk.Toplevel):
         method = self._ocr_method_var.get()
         self._settings.set("ocr_method", method)
         ocr.set_method(method)
+
+    # ------------------------------------------------- Segmentation panel
+    def _build_segmentation_section(self, parent: tk.Frame) -> None:
+        tk.Label(
+            parent, text="Segmentation", anchor=tk.W,
+            font=("TkDefaultFont", 11, "bold"),
+        ).pack(fill=tk.X, pady=(0, 10))
+
+        tk.Label(
+            parent,
+            text="Automatic text-block detection uses the comic-text-detector "
+            "model (ONNX). The model is large (~90 MB) and must be downloaded "
+            "separately.",
+            anchor=tk.W,
+            fg="#666666",
+            wraplength=340,
+            justify=tk.LEFT,
+        ).pack(fill=tk.X, pady=(0, 10))
+
+        # Health checks, mirroring the OCR section's status rows.
+        status = tk.Frame(parent)
+        status.pack(fill=tk.X, pady=2)
+
+        runtime_ok = segmentation.is_runtime_available()
+        self._seg_add_status_row(status, "onnxruntime installed:", runtime_ok)
+
+        model_row = tk.Frame(status)
+        model_row.pack(fill=tk.X, pady=1)
+        tk.Label(
+            model_row, text="Model downloaded:", anchor=tk.W, width=20
+        ).pack(side=tk.LEFT)
+        self._seg_model_value = tk.Label(
+            model_row, font=("TkDefaultFont", 9, "bold")
+        )
+        self._seg_model_value.pack(side=tk.LEFT, padx=(6, 0))
+
+        # Download controls.
+        controls = tk.Frame(parent)
+        controls.pack(fill=tk.X, pady=(12, 2))
+        self._seg_download_btn = tk.Button(
+            controls, text="Download model", command=self._on_download_model
+        )
+        self._seg_download_btn.pack(side=tk.LEFT)
+        self._seg_progress = ttk.Progressbar(
+            controls, orient=tk.HORIZONTAL, length=180, mode="determinate"
+        )
+        self._seg_progress.pack(side=tk.LEFT, padx=(8, 0))
+
+        self._seg_status_label = tk.Label(
+            parent, anchor=tk.W, fg="#666666", wraplength=340,
+            justify=tk.LEFT,
+        )
+        self._seg_status_label.pack(fill=tk.X, pady=(8, 0))
+
+        # Download state, so the UI thread can poll a background worker.
+        self._seg_downloading = False
+        self._seg_cancel = False
+
+        self._refresh_segmentation_status()
+
+    def _seg_add_status_row(self, parent, label: str, ok: bool) -> None:
+        row = tk.Frame(parent)
+        row.pack(fill=tk.X, pady=1)
+        tk.Label(row, text=label, anchor=tk.W, width=20).pack(side=tk.LEFT)
+        tk.Label(
+            row,
+            text="Yes" if ok else "No",
+            fg="#2e7d32" if ok else "#c62828",
+            font=("TkDefaultFont", 9, "bold"),
+        ).pack(side=tk.LEFT, padx=(6, 0))
+
+    def _refresh_segmentation_status(self) -> None:
+        """Update the model-present label and the download button state."""
+        present = segmentation.is_model_present()
+        self._seg_model_value.config(
+            text="Yes" if present else "No",
+            fg="#2e7d32" if present else "#c62828",
+        )
+        if self._seg_downloading:
+            self._seg_download_btn.config(text="Cancel", state=tk.NORMAL)
+        elif present:
+            self._seg_download_btn.config(
+                text="Re-download model", state=tk.NORMAL
+            )
+        elif not segmentation.is_runtime_available():
+            # No point downloading if the runtime is missing.
+            self._seg_download_btn.config(
+                text="Download model", state=tk.DISABLED
+            )
+            self._seg_status_label.config(
+                text="Install onnxruntime first:\n"
+                "    ./venv/bin/pip install onnxruntime"
+            )
+        else:
+            self._seg_download_btn.config(
+                text="Download model", state=tk.NORMAL
+            )
+
+    def _on_download_model(self) -> None:
+        if self._seg_downloading:
+            # Second press acts as Cancel.
+            self._seg_cancel = True
+            self._seg_status_label.config(text="Cancelling...")
+            return
+
+        self._seg_downloading = True
+        self._seg_cancel = False
+        self._seg_progress.config(value=0, maximum=100)
+        self._seg_status_label.config(text="Downloading...")
+        self._refresh_segmentation_status()
+
+        # Shared progress state updated by the worker thread and polled by the
+        # UI thread (Tk widgets must only be touched from the main thread).
+        self._seg_progress_state = {"done": 0, "total": 0}
+        self._seg_error = None
+
+        def worker():
+            def on_progress(done, total):
+                self._seg_progress_state = {"done": done, "total": total}
+
+            def should_cancel():
+                return self._seg_cancel
+
+            try:
+                segmentation.download_model(
+                    progress=on_progress, cancel=should_cancel
+                )
+            except Exception as exc:  # noqa: BLE001
+                self._seg_error = str(exc)
+
+        self._seg_thread = threading.Thread(target=worker, daemon=True)
+        self._seg_thread.start()
+        self._poll_download()
+
+    def _poll_download(self) -> None:
+        """Poll the background download, updating the progress bar."""
+        state = getattr(self, "_seg_progress_state", {"done": 0, "total": 0})
+        done, total = state["done"], state["total"]
+        if total > 0:
+            self._seg_progress.config(value=done * 100 // total)
+            self._seg_status_label.config(
+                text=f"Downloading... {done:,} / {total:,} bytes"
+            )
+
+        if self._seg_thread.is_alive():
+            self.after(200, self._poll_download)
+            return
+
+        # Download finished (or failed / cancelled).
+        self._seg_downloading = False
+        if self._seg_error:
+            if "cancel" in self._seg_error.lower():
+                self._seg_status_label.config(text="Download cancelled.")
+            else:
+                self._seg_status_label.config(text="Download failed.")
+                messagebox.showerror(
+                    "Download failed", self._seg_error, parent=self
+                )
+            self._seg_progress.config(value=0)
+        else:
+            self._seg_progress.config(value=100)
+            self._seg_status_label.config(text="Model downloaded.")
+        self._refresh_segmentation_status()
 
     # ---------------------------------------------------------- Mokuro panel
     def _build_mokuro_section(self, parent: tk.Frame) -> None:

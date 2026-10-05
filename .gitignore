@@ -5,3 +5,8 @@ sample.cbz
 .venv/
 venv/
 fonts/
+
+# Segmentation model, downloaded separately (~90 MB). See Settings >
+# Segmentation or mogura/segmentation.py (MODEL_URL).
+models/comictextdetector.pt.onnx
+models/*.part
