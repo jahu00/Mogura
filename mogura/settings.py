@@ -30,6 +30,15 @@ _DEFAULTS: Dict[str, Any] = {
     "overlap_threshold": 0.0,
     # Automatically run OCR on a newly added text item.
     "auto_ocr_on_add": False,
+    # How the segmentation model feeds OCR when the Segmentation Mask view is
+    # enabled. Either:
+    #   "apply" - apply the mask to the image (whiten non-text, keep original
+    #             text pixels). Best for the usual black-on-white text, but can
+    #             hurt white-on-black text (the white text blends into the
+    #             whitened background).
+    #   "mask"  - OCR the raw segmentation mask (white text on black). Polarity
+    #             independent, so it copes with white-on-black text.
+    "ocr_segmentation_mode": "apply",
 }
 
 

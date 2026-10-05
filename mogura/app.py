@@ -1361,13 +1361,14 @@ class MoguraApp(_TkBase):
         self.config(cursor="watch")
         self.update_idletasks()
         try:
-            # Optionally clean just this block's region with the segmentation
-            # text mask before recognizing it.
+            # When the Segmentation Mask view is on, feed OCR from the
+            # segmentation model: either apply the mask to the crop (whiten
+            # non-text) or OCR the raw mask (white text on black).
             if self._use_ocr_segmentation():
                 try:
-                    cleaned = segmentation.clean_crop(crop)
-                    if cleaned is not None:
-                        crop = cleaned.convert("RGB")
+                    prepared = self._apply_segmentation_to_crop(block)
+                    if prepared is not None:
+                        crop = prepared
                 except Exception as exc:  # noqa: BLE001 - fall back to raw crop
                     _log.warning(
                         "Segmentation cleanup failed for item %d: %s",
@@ -1415,13 +1416,37 @@ class MoguraApp(_TkBase):
         return image.crop((x1, y1, x2, y2)).convert("RGB")
 
     def _use_ocr_segmentation(self) -> bool:
-        """True if OCR should clean regions with the segmentation mask first.
+        """True if OCR should use the segmentation model to prepare regions.
 
         This follows the main view's Segmentation Mask toggle: when the mask is
-        shown, OCR recognizes from the mask-cleaned imagery; otherwise it uses
-        the original image.
+        shown, OCR recognizes from segmentation-derived imagery; otherwise it
+        uses the original image.
         """
         return self._mask_mode and segmentation.is_available()
+
+    def _ocr_segmentation_mode(self) -> str:
+        """How segmentation feeds OCR: "apply" (mask the image) or "mask"."""
+        mode = self._settings.get("ocr_segmentation_mode")
+        return "mask" if mode == "mask" else "apply"
+
+    def _apply_segmentation_to_crop(self, block):
+        """Return the OCR crop for ``block`` prepared via segmentation.
+
+        In "apply" mode the mask is applied to the original crop (non-text
+        whitened out, original text pixels kept). In "mask" mode the raw text
+        mask (white text on black) is returned, which is independent of text
+        polarity. Returns ``None`` to fall back to the plain crop.
+        """
+        crop = self._crop_block(block)
+        if crop is None:
+            return None
+        if self._ocr_segmentation_mode() == "mask":
+            prepared = segmentation.mask_crop(crop)
+        else:
+            prepared = segmentation.clean_crop(crop)
+        if prepared is None:
+            return None
+        return prepared.convert("RGB")
 
     # ------------------------------------------------------------- wizard
     def open_wizard(self) -> None:
@@ -1510,9 +1535,14 @@ class MoguraApp(_TkBase):
         cleaned_page = None
         try:
             if want_clean:
-                boxes, cleaned_page = segmentation.detect_and_clean(
-                    self._current_image
-                )
+                if self._ocr_segmentation_mode() == "mask":
+                    boxes, cleaned_page = segmentation.detect_and_mask(
+                        self._current_image
+                    )
+                else:
+                    boxes, cleaned_page = segmentation.detect_and_clean(
+                        self._current_image
+                    )
             else:
                 boxes = segmentation.detect(self._current_image)
         except Exception as exc:  # noqa: BLE001 - runtime/engine errors

@@ -359,6 +359,27 @@ def clean_crop(image: Image.Image, box=None) -> Optional[Image.Image]:
     return cleaned.crop((x1, y1, x2, y2))
 
 
+def mask_crop(image: Image.Image, box=None) -> Optional[Image.Image]:
+    """Return the raw text mask for ``image`` (or a sub-region of it).
+
+    Runs the model over ``image`` and returns the text mask (white text on
+    black, grayscale ``"L"``). If ``box`` (``[x1, y1, x2, y2]`` in ``image``
+    coordinates) is given, only that region is returned. Returns ``None`` if
+    the region is empty. Raises if segmentation is unavailable or the engine
+    fails; callers should guard with :func:`is_available`.
+    """
+    mask = mask_image(image)
+    if box is None:
+        return mask
+    width, height = mask.size
+    x1, y1, x2, y2 = (list(box) + [0, 0, 0, 0])[:4]
+    x1 = max(0, min(width, int(x1))); x2 = max(0, min(width, int(x2)))
+    y1 = max(0, min(height, int(y1))); y2 = max(0, min(height, int(y2)))
+    if x2 - x1 < 1 or y2 - y1 < 1:
+        return None
+    return mask.crop((x1, y1, x2, y2))
+
+
 def detect_and_clean(image: Image.Image):
     """Return ``(boxes, cleaned_image)`` from a single inference pass.
 
@@ -371,3 +392,19 @@ def detect_and_clean(image: Image.Image):
     boxes = _decode_boxes(blk, ratio, image.size)
     cleaned = _clean_with_mask(image, mask)
     return boxes, cleaned
+
+
+def detect_and_mask(image: Image.Image):
+    """Return ``(boxes, mask_image)`` from a single inference pass.
+
+    Like :func:`detect_and_clean`, but the second element is the raw text
+    mask (white text on black, grayscale ``"L"``) rather than the original
+    image with non-text whitened out. Useful for OCRing the mask directly,
+    which is polarity-independent (copes with white-on-black text).
+    """
+    import numpy as np
+
+    blk, mask, ratio = _infer(image)
+    boxes = _decode_boxes(blk, ratio, image.size)
+    arr = (np.clip(mask, 0.0, 1.0) * 255).astype(np.uint8)
+    return boxes, Image.fromarray(arr, mode="L")

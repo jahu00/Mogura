@@ -38,8 +38,9 @@ _EXISTING_MODES = [_MODE_OVERWRITE, _MODE_SKIP_OVERLAP]
 
 # OCR source choices.
 _SRC_ORIGINAL = "Original image"
-_SRC_SEGMENTED = "Segmentation-cleaned image"
-_OCR_SOURCES = [_SRC_ORIGINAL, _SRC_SEGMENTED]
+_SRC_SEGMENTED = "Segmentation-masked image"
+_SRC_MASK = "Segmentation mask (white on black)"
+_OCR_SOURCES = [_SRC_ORIGINAL, _SRC_SEGMENTED, _SRC_MASK]
 
 
 class WizardDialog(tk.Toplevel):
@@ -151,11 +152,14 @@ class WizardDialog(tk.Toplevel):
             src, text="OCR source:", anchor=tk.W, width=16
         )
         self._src_label.pack(side=tk.LEFT)
-        default_src = (
-            _SRC_SEGMENTED
-            if getattr(self._app, "_mask_mode", False)
-            else _SRC_ORIGINAL
-        )
+        if getattr(self._app, "_mask_mode", False):
+            default_src = (
+                _SRC_MASK
+                if self._app._ocr_segmentation_mode() == "mask"
+                else _SRC_SEGMENTED
+            )
+        else:
+            default_src = _SRC_ORIGINAL
         self._src_var = tk.StringVar(value=default_src)
         self._src_combo = ttk.Combobox(
             src,
@@ -226,7 +230,7 @@ class WizardDialog(tk.Toplevel):
 
         run_ocr = self._run_ocr_var.get()
         engine = self._engine_var.get()
-        use_seg = self._src_var.get() == _SRC_SEGMENTED
+        src = self._src_var.get()
         if run_ocr and not ocr.is_available(engine):
             messagebox.showinfo(
                 "OCR unavailable",
@@ -254,7 +258,7 @@ class WizardDialog(tk.Toplevel):
             "existing_mode": self._existing_mode_var.get(),
             "run_ocr": run_ocr,
             "engine": engine,
-            "use_segmentation": use_seg,
+            "ocr_source": src,
             "threshold": app._overlap_threshold(),
         }
 
@@ -323,10 +327,13 @@ class WizardDialog(tk.Toplevel):
                     width, height = image.size
                     page = mokuro.ensure_page(name, width, height)
 
-                # Detect (optionally also getting a cleaned page for OCR).
-                cleaned = None
-                if options["run_ocr"] and options["use_segmentation"]:
-                    boxes, cleaned = segmentation.detect_and_clean(image)
+                # Detect (optionally also getting a prepared page for OCR:
+                # either the mask-cleaned image or the raw mask).
+                prepared = None
+                if options["run_ocr"] and options["ocr_source"] == _SRC_SEGMENTED:
+                    boxes, prepared = segmentation.detect_and_clean(image)
+                elif options["run_ocr"] and options["ocr_source"] == _SRC_MASK:
+                    boxes, prepared = segmentation.detect_and_mask(image)
                 else:
                     boxes = segmentation.detect(image)
 
@@ -362,7 +369,7 @@ class WizardDialog(tk.Toplevel):
 
                 # OCR the new blocks.
                 if options["run_ocr"] and new_blocks:
-                    src_image = cleaned if cleaned is not None else image
+                    src_image = prepared if prepared is not None else image
                     for block in new_blocks:
                         if self._cancel:
                             break
