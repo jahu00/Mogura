@@ -30,6 +30,10 @@ _DEFAULTS: Dict[str, Any] = {
     "overlap_threshold": 0.0,
     # Automatically run OCR on a newly added text item.
     "auto_ocr_on_add": False,
+    # Before running OCR, clean the region with the segmentation text mask
+    # (whiten out non-text) so artwork/screentones don't distract the
+    # recognizer. Requires the segmentation model to be available.
+    "ocr_use_segmentation": False,
 }
 
 

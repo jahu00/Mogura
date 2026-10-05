@@ -1256,6 +1256,18 @@ class MoguraApp(_TkBase):
         self.config(cursor="watch")
         self.update_idletasks()
         try:
+            # Optionally clean just this block's region with the segmentation
+            # text mask before recognizing it.
+            if self._use_ocr_segmentation():
+                try:
+                    cleaned = segmentation.clean_crop(crop)
+                    if cleaned is not None:
+                        crop = cleaned.convert("RGB")
+                except Exception as exc:  # noqa: BLE001 - fall back to raw crop
+                    _log.warning(
+                        "Segmentation cleanup failed for item %d: %s",
+                        index + 1, exc,
+                    )
             lines = ocr.recognize(crop, vertical=block.vertical)
         except Exception as exc:  # noqa: BLE001 - runtime/engine errors
             _log.error("OCR failed on item %d: %s", index + 1, exc)
@@ -1277,19 +1289,31 @@ class MoguraApp(_TkBase):
         self._update_text_counts()
         self._status.config(text=f"OCR filled in text for item {index + 1}.")
 
-    def _crop_block(self, block):
-        """Return the current page image cropped to ``block``'s box (or None)."""
-        if self._current_image is None:
+    def _crop_block(self, block, source=None):
+        """Return the page image cropped to ``block``'s box (or None).
+
+        ``source`` lets callers supply an alternative full-page image to crop
+        from (e.g. a segmentation-cleaned page); it defaults to the current
+        page image.
+        """
+        image = source if source is not None else self._current_image
+        if image is None:
             return None
         x1, y1, x2, y2 = (block.box + [0, 0, 0, 0])[:4]
         if x2 - x1 < 1 or y2 - y1 < 1:
             return None
-        iw, ih = self._current_image.size
+        iw, ih = image.size
         x1 = max(0, min(iw, x1)); x2 = max(0, min(iw, x2))
         y1 = max(0, min(ih, y1)); y2 = max(0, min(ih, y2))
         if x2 - x1 < 1 or y2 - y1 < 1:
             return None
-        return self._current_image.crop((x1, y1, x2, y2)).convert("RGB")
+        return image.crop((x1, y1, x2, y2)).convert("RGB")
+
+    def _use_ocr_segmentation(self) -> bool:
+        """True if OCR should clean regions with the segmentation mask first."""
+        return bool(
+            self._settings.get("ocr_use_segmentation")
+        ) and segmentation.is_available()
 
     # ------------------------------------------------------- segmentation
     def segment_page(self) -> None:
@@ -1322,11 +1346,25 @@ class MoguraApp(_TkBase):
                 self._archive.page_name(self._current_page), width, height
             )
 
+        # When OCR-with-segmentation is enabled and we'll auto-OCR anyway, grab
+        # the mask-cleaned page in the same inference pass so each block can be
+        # recognized from the clean image without re-running the model per box.
+        want_clean = (
+            bool(self._settings.get("ocr_use_segmentation"))
+            and bool(self._settings.get("auto_ocr_on_add"))
+            and ocr.is_available()
+        )
         _log.info("Running segmentation on page %d", self._current_page + 1)
         self.config(cursor="watch")
         self.update_idletasks()
+        cleaned_page = None
         try:
-            boxes = segmentation.detect(self._current_image)
+            if want_clean:
+                boxes, cleaned_page = segmentation.detect_and_clean(
+                    self._current_image
+                )
+            else:
+                boxes = segmentation.detect(self._current_image)
         except Exception as exc:  # noqa: BLE001 - runtime/engine errors
             _log.error("Segmentation failed: %s", exc)
             messagebox.showerror(
@@ -1355,10 +1393,11 @@ class MoguraApp(_TkBase):
             new_blocks.append(block)
         self._mark_dirty()
 
-        # Optionally OCR each freshly detected block straight away.
+        # Optionally OCR each freshly detected block straight away, cropping
+        # from the mask-cleaned page when it is available.
         ocr_count = 0
         if self._settings.get("auto_ocr_on_add") and ocr.is_available():
-            ocr_count = self._ocr_blocks(new_blocks)
+            ocr_count = self._ocr_blocks(new_blocks, source=cleaned_page)
 
         self._text_panel.refresh()
         self._center.set_boxes([b.box for b in page.blocks])
@@ -1376,19 +1415,21 @@ class MoguraApp(_TkBase):
                 "Run OCR or type the text."
             )
 
-    def _ocr_blocks(self, blocks) -> int:
+    def _ocr_blocks(self, blocks, source=None) -> int:
         """Run OCR on each block in ``blocks``, filling in its text.
 
         Intended for batch use (e.g. after segmentation): errors on individual
         blocks are logged and skipped rather than interrupting with a dialog.
-        Returns the number of blocks that got text.
+        ``source`` optionally supplies a full-page image to crop each block
+        from (e.g. a segmentation-cleaned page). Returns the number of blocks
+        that got text.
         """
         filled = 0
         self.config(cursor="watch")
         self.update_idletasks()
         try:
             for block in blocks:
-                crop = self._crop_block(block)
+                crop = self._crop_block(block, source=source)
                 if crop is None:
                     continue
                 try:

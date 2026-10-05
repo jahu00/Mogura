@@ -39,14 +39,18 @@ MODEL_URL = (
 _MODEL_SIZE = 94669756
 
 # Inference parameters. The model takes a fixed 1024x1024 letterboxed image and
-# emits YOLO-style block detections plus segmentation maps; we only use the
-# block boxes.
+# emits YOLO-style block detections (``blk``) plus a per-pixel text mask
+# (``seg``). We use the boxes for detection and, optionally, the mask to clean
+# a crop before OCR.
 _INPUT_SIZE = 1024
 _CONF_THRESHOLD = 0.4
 _NMS_IOU = 0.35
 # Ignore boxes smaller than this many pixels on a side (in original-image
 # coordinates) to drop stray noise detections.
 _MIN_SIDE = 3
+# Pixels whose text-mask probability is at least this are treated as text when
+# cleaning a crop for OCR.
+_MASK_THRESHOLD = 0.3
 
 # The engine is relatively expensive to construct, so build it lazily and cache
 # the single instance for reuse.
@@ -222,21 +226,38 @@ def _nms(boxes, scores, iou_threshold: float) -> List[int]:
     return keep
 
 
-def detect(image: Image.Image) -> List[List[int]]:
-    """Detect text-block bounding boxes on ``image``.
+def _infer(image: Image.Image):
+    """Run the model once, returning ``(blk, mask, ratio)``.
 
-    Returns a list of ``[x1, y1, x2, y2]`` integer boxes in the coordinate
-    space of the input image, sorted top-to-bottom then left-to-right. Returns
-    an empty list if nothing is detected. Raises if segmentation is unavailable
-    or the engine fails; callers should guard with :func:`is_available`.
+    ``blk`` is the raw ``(N, 7)`` detection array, ``mask`` is the per-pixel
+    text probability map resized back to the original image size (a float32
+    HxW array in ``0..1``), and ``ratio`` is the letterbox scale factor.
     """
     import numpy as np
 
     session = _get_session()
-    canvas, ratio = _letterbox(image, _INPUT_SIZE)
+    width, height = image.size
+    ratio = min(_INPUT_SIZE / width, _INPUT_SIZE / height)
+    new_w = int(round(width * ratio))
+    new_h = int(round(height * ratio))
+    canvas, _ = _letterbox(image, _INPUT_SIZE)
     blob = canvas.transpose(2, 0, 1)[None].astype(np.float32) / 255.0
 
-    blk = session.run(None, {_input_name: blob})[0]
+    blk, seg, _det = session.run(None, {_input_name: blob})
+
+    # Crop the mask to the non-padded region and resize to the original image.
+    mask = seg[0, 0][:new_h, :new_w]
+    mask_img = Image.fromarray((mask * 255).astype(np.uint8)).resize(
+        (width, height), Image.BILINEAR
+    )
+    mask = np.asarray(mask_img).astype(np.float32) / 255.0
+    return blk, mask, ratio
+
+
+def _decode_boxes(blk, ratio, size) -> List[List[int]]:
+    """Decode the raw ``blk`` detections into sorted integer boxes."""
+    import numpy as np
+
     pred = blk[0]  # (N, 7): cx, cy, w, h, obj_conf, cls0, cls1
     obj = pred[:, 4]
     pred = pred[obj > _CONF_THRESHOLD]
@@ -254,7 +275,7 @@ def detect(image: Image.Image) -> List[List[int]]:
 
     # Map letterboxed coordinates back onto the original image and clamp.
     boxes = boxes / ratio
-    width, height = image.size
+    width, height = size
     boxes[:, [0, 2]] = boxes[:, [0, 2]].clip(0, width)
     boxes[:, [1, 3]] = boxes[:, [1, 3]].clip(0, height)
 
@@ -268,3 +289,70 @@ def detect(image: Image.Image) -> List[List[int]]:
     # Reading order: top-to-bottom, then left-to-right.
     result.sort(key=lambda b: (b[1], b[0]))
     return result
+
+
+def detect(image: Image.Image) -> List[List[int]]:
+    """Detect text-block bounding boxes on ``image``.
+
+    Returns a list of ``[x1, y1, x2, y2]`` integer boxes in the coordinate
+    space of the input image, sorted top-to-bottom then left-to-right. Returns
+    an empty list if nothing is detected. Raises if segmentation is unavailable
+    or the engine fails; callers should guard with :func:`is_available`.
+    """
+    blk, _mask, ratio = _infer(image)
+    return _decode_boxes(blk, ratio, image.size)
+
+
+def _clean_with_mask(image: Image.Image, mask) -> Image.Image:
+    """Return ``image`` with everything but detected text whitened out.
+
+    ``mask`` is a float32 text-probability map the same size as ``image``.
+    Pixels below :data:`_MASK_THRESHOLD` are forced to white, leaving the dark
+    text strokes on a clean background so the recognizer isn't distracted by
+    artwork or screentones. If the mask is essentially empty (no text found)
+    the original image is returned unchanged.
+    """
+    import numpy as np
+
+    text = mask >= _MASK_THRESHOLD
+    if not text.any():
+        return image.convert("RGB")
+    rgb = np.asarray(image.convert("RGB")).copy()
+    rgb[~text] = 255
+    return Image.fromarray(rgb)
+
+
+def clean_crop(image: Image.Image, box=None) -> Optional[Image.Image]:
+    """Return a cleaned-up version of ``image`` (or a sub-region of it).
+
+    Runs the model over ``image``, uses the text mask to whiten everything
+    that isn't text, and returns the result. If ``box`` (``[x1, y1, x2, y2]``
+    in ``image`` coordinates) is given, only that region is returned. Returns
+    ``None`` if the region is empty. Raises if segmentation is unavailable or
+    the engine fails; callers should guard with :func:`is_available`.
+    """
+    _blk, mask, _ratio = _infer(image)
+    cleaned = _clean_with_mask(image, mask)
+    if box is None:
+        return cleaned
+    width, height = cleaned.size
+    x1, y1, x2, y2 = (list(box) + [0, 0, 0, 0])[:4]
+    x1 = max(0, min(width, int(x1))); x2 = max(0, min(width, int(x2)))
+    y1 = max(0, min(height, int(y1))); y2 = max(0, min(height, int(y2)))
+    if x2 - x1 < 1 or y2 - y1 < 1:
+        return None
+    return cleaned.crop((x1, y1, x2, y2))
+
+
+def detect_and_clean(image: Image.Image):
+    """Return ``(boxes, cleaned_image)`` from a single inference pass.
+
+    Convenience for whole-page segmentation that also wants the mask-cleaned
+    page (so each detected block can be OCR'd from the clean image without
+    re-running the model per block). ``boxes`` is as from :func:`detect`;
+    ``cleaned_image`` is the full page with non-text whitened out.
+    """
+    blk, mask, ratio = _infer(image)
+    boxes = _decode_boxes(blk, ratio, image.size)
+    cleaned = _clean_with_mask(image, mask)
+    return boxes, cleaned

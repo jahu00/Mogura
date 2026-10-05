@@ -97,6 +97,14 @@ or
   bundled: open Settings → *Segmentation* to check status and download it
   (~90 MB) with one click. The section also reports whether `onnxruntime` is
   installed. Once present, segmentation runs locally with no network access.
+  If auto-OCR on add is enabled (Settings → *Mokuro*), each detected block is
+  OCR'd immediately.
+- **Clean with segmentation before OCR**: Settings → *OCR* has a *Clean text
+  region with segmentation before OCR* option. When on (and the segmentation
+  model is available), OCR first uses the model's per-pixel text mask to whiten
+  out surrounding artwork and screentones, which can improve recognition on
+  busy backgrounds. Whole-page segmentation reuses a single cleaned page for
+  all its blocks; manual single-block OCR cleans just that block's region.
 - **Move / resize a box**: select a text item, then press the move/resize button
   in the Text panel toolbar. The selected box gains drag handles — drag a handle
   to resize, or drag inside the box to move it. The mode turns off when you press

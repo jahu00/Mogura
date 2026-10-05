@@ -143,10 +143,37 @@ class SettingsDialog(tk.Toplevel):
         combo.pack(side=tk.LEFT, padx=(6, 0))
         combo.bind("<<ComboboxSelected>>", lambda _e: self._on_ocr_method())
 
+        # Clean the region with the segmentation mask before OCR.
+        self._ocr_use_seg_var = tk.BooleanVar(
+            value=bool(self._settings.get("ocr_use_segmentation"))
+        )
+        tk.Checkbutton(
+            parent,
+            text="Clean text region with segmentation before OCR",
+            variable=self._ocr_use_seg_var,
+            anchor=tk.W,
+            command=self._on_ocr_use_seg,
+        ).pack(fill=tk.X, pady=(14, 0))
+        tk.Label(
+            parent,
+            text="Uses the segmentation model's text mask to whiten out "
+            "artwork and screentones around the text first. Needs the "
+            "segmentation model (see the Segmentation section).",
+            anchor=tk.W,
+            fg="#666666",
+            wraplength=340,
+            justify=tk.LEFT,
+        ).pack(fill=tk.X, pady=(2, 0))
+
     def _on_ocr_method(self) -> None:
         method = self._ocr_method_var.get()
         self._settings.set("ocr_method", method)
         ocr.set_method(method)
+
+    def _on_ocr_use_seg(self) -> None:
+        self._settings.set(
+            "ocr_use_segmentation", self._ocr_use_seg_var.get()
+        )
 
     # ------------------------------------------------- Segmentation panel
     def _build_segmentation_section(self, parent: tk.Frame) -> None:
