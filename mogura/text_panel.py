@@ -5,6 +5,7 @@ from __future__ import annotations
 import tkinter as tk
 from typing import Callable, List, Optional
 
+from . import ocr
 from .icons import get_icon
 from .mokuro import MokuroPage, TextBlock
 
@@ -28,6 +29,7 @@ class TextPanel(tk.Frame):
         on_combine_requested: Optional[Callable[[List[int]], None]] = None,
         on_split_requested: Optional[Callable[[int], None]] = None,
         on_box_edit_requested: Optional[Callable[[], None]] = None,
+        on_ocr_requested: Optional[Callable[[int], None]] = None,
         **kwargs,
     ):
         super().__init__(master, bg=self.NORMAL_BG, **kwargs)
@@ -49,6 +51,9 @@ class TextPanel(tk.Frame):
         self._on_split_requested = on_split_requested
         # Called when the user presses the move/resize box button.
         self._on_box_edit_requested = on_box_edit_requested
+        # Called when the user presses OCR; the app runs OCR on the selected
+        # block's region and fills in its text.
+        self._on_ocr_requested = on_ocr_requested
 
         # State used by the toolbar; initialized before it is built.
         self._page: Optional[MokuroPage] = None
@@ -89,36 +94,55 @@ class TextPanel(tk.Frame):
         bar.pack(side=tk.TOP, fill=tk.X)
 
         self._tool_buttons: List[tk.Button] = []
-        specs = [
-            ("add", "＋", self.add_block, "Add text item"),
-            ("delete", "🗑", self.remove_selected_block, "Remove selected item"),
-            ("up", "▲", self.move_selected_up, "Move item up"),
-            ("down", "▼", self.move_selected_down, "Move item down"),
-            ("join", "⧉", self._request_combine, "Combine checked items"),
-            ("split", "⇔", self._request_split, "Split selected item"),
-            ("select", "❖", self._request_box_edit, "Move/resize selected box"),
+        # Buttons grouped by purpose; a thin separator is drawn between groups.
+        groups = [
+            [
+                ("add", "＋", self.add_block, "Add text item"),
+                ("delete", "🗑", self.remove_selected_block, "Remove selected item"),
+            ],
+            [
+                ("up", "▲", self.move_selected_up, "Move item up"),
+                ("down", "▼", self.move_selected_down, "Move item down"),
+            ],
+            [
+                ("join", "⧉", self._request_combine, "Combine checked items"),
+                ("split", "⇔", self._request_split, "Split selected item"),
+            ],
+            [
+                ("select", "❖", self._request_box_edit, "Move/resize selected box"),
+                ("ocr", "OCR", self._request_ocr, "OCR selected item"),
+            ],
         ]
-        for icon_name, fallback, command, _tip in specs:
-            photo = get_icon(icon_name, size=18)
-            if photo is not None:
-                btn = tk.Button(bar, image=photo, command=command)
-                btn._icon = photo  # keep a reference alive
-            else:
-                btn = tk.Button(
-                    bar, text=fallback, command=command,
-                    font=("TkDefaultFont", 11),
-                )
-            btn.pack(side=tk.LEFT, padx=2, pady=2)
-            # Remember the default look so toggle styling can be undone.
-            btn._default_relief = btn.cget("relief")
-            btn._default_bg = btn.cget("background")
-            self._tool_buttons.append(btn)
+        for group_index, group in enumerate(groups):
+            if group_index > 0:
+                self._add_separator(bar)
+            for icon_name, fallback, command, _tip in group:
+                photo = get_icon(icon_name, size=18)
+                if photo is not None:
+                    btn = tk.Button(bar, image=photo, command=command)
+                    btn._icon = photo  # keep a reference alive
+                else:
+                    btn = tk.Button(
+                        bar, text=fallback, command=command,
+                        font=("TkDefaultFont", 11),
+                    )
+                btn.pack(side=tk.LEFT, padx=2, pady=2)
+                # Remember the default look so toggle styling can be undone.
+                btn._default_relief = btn.cget("relief")
+                btn._default_bg = btn.cget("background")
+                self._tool_buttons.append(btn)
 
-        # Named handles for the two toggle-style buttons (first and last).
+        # Named handles for the two toggle-style buttons.
         self._add_btn = self._tool_buttons[0]
-        self._box_edit_btn = self._tool_buttons[-1]
+        self._box_edit_btn = self._tool_buttons[-2]
 
         self._update_toolbar_state()
+
+    def _add_separator(self, bar: tk.Frame) -> None:
+        """Draw a thin vertical divider between toolbar button groups."""
+        tk.Frame(bar, width=1, bg="#c0c0c0").pack(
+            side=tk.LEFT, fill=tk.Y, padx=4, pady=2
+        )
 
     def _set_button_active(self, btn, active: bool) -> None:
         """Give a toolbar button a pressed-in look when active."""
@@ -147,9 +171,9 @@ class TextPanel(tk.Frame):
         has_page = self._page is not None
         has_sel = self._selected is not None
         count = len(self._page.blocks) if self._page is not None else 0
-        # Buttons: [add, delete, up, down, combine, split, box-edit]
+        # Buttons: [add, delete, up, down, combine, split, box-edit, ocr]
         (add_btn, del_btn, up_btn, down_btn, combine_btn, split_btn,
-         box_edit_btn) = self._tool_buttons
+         box_edit_btn, ocr_btn) = self._tool_buttons
         add_btn.config(state=tk.NORMAL if has_page else tk.DISABLED)
         del_btn.config(state=tk.NORMAL if has_sel else tk.DISABLED)
         up_btn.config(
@@ -167,6 +191,10 @@ class TextPanel(tk.Frame):
         # Split and box-edit act on the single selected item.
         split_btn.config(state=tk.NORMAL if has_sel else tk.DISABLED)
         box_edit_btn.config(state=tk.NORMAL if has_sel else tk.DISABLED)
+        # OCR needs a selected item and an available OCR backend.
+        ocr_btn.config(
+            state=tk.NORMAL if has_sel and ocr.is_available() else tk.DISABLED
+        )
 
     def checked_indices(self) -> List[int]:
         """Indices of blocks whose multi-select checkbox is ticked."""
@@ -192,6 +220,15 @@ class TextPanel(tk.Frame):
         """Ask the app to toggle move/resize for the selected box."""
         if self._on_box_edit_requested is not None:
             self._on_box_edit_requested()
+
+    def _request_ocr(self) -> None:
+        """Ask the app to run OCR on the currently selected item."""
+        if self._selected is None:
+            return
+        # Commit any in-progress edit so OCR replaces the committed text.
+        self._commit_block(self._selected)
+        if self._on_ocr_requested is not None:
+            self._on_ocr_requested(self._selected)
 
     # ------------------------------------------------------------- scrolling
     def _bind_scroll(self, widget) -> None:

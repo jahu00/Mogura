@@ -369,6 +369,7 @@ class MoguraApp(_TkBase):
             on_combine_requested=self._on_combine_requested,
             on_split_requested=self._on_split_requested,
             on_box_edit_requested=self.toggle_box_edit,
+            on_ocr_requested=self._on_ocr_requested,
         )
         self._text_panel.pack(fill=tk.BOTH, expand=True)
 
@@ -403,8 +404,19 @@ class MoguraApp(_TkBase):
 
     def open_settings(self) -> None:
         """Open the settings window (sections list + per-section options)."""
-        dialog = SettingsDialog(self, self._settings)
+        dialog = SettingsDialog(
+            self, self._settings, on_change=self._on_settings_changed
+        )
         self.wait_window(dialog)
+
+    def _on_settings_changed(self) -> None:
+        """Re-apply view-affecting settings (e.g. overlap threshold) live."""
+        self._update_text_counts()
+        if self._mokuro is not None and self._archive is not None:
+            page = self._mokuro.page_for(
+                self._archive.page_name(self._current_page)
+            )
+            self._refresh_overlaps(page)
 
     # ----------------------------------------------------------- bounding box
     def toggle_boxes(self) -> None:
@@ -879,12 +891,16 @@ class MoguraApp(_TkBase):
             self._page_list.set_text_counts(None)
             self._page_list.set_warnings(None)
             return
+        threshold = self._overlap_threshold()
         counts = []
         warnings = []
         for i in range(self._archive.page_count):
             page = self._mokuro.page_for(self._archive.page_name(i))
             counts.append(len(page.blocks) if page is not None else None)
-            warnings.append(page.has_overlapping_boxes() if page is not None else False)
+            warnings.append(
+                page.has_overlapping_boxes(threshold)
+                if page is not None else False
+            )
         self._page_list.set_text_counts(counts)
         self._page_list.set_warnings(warnings)
 
@@ -1067,12 +1083,22 @@ class MoguraApp(_TkBase):
         self._center.set_boxes([b.box for b in page.blocks] if page else [])
         self._refresh_overlaps(page)
 
+    def _overlap_threshold(self) -> float:
+        """Current overlap threshold (0..1) from settings, clamped."""
+        try:
+            value = float(self._settings.get("overlap_threshold"))
+        except (TypeError, ValueError):
+            return 0.0
+        return max(0.0, min(1.0, value))
+
     def _refresh_overlaps(self, page) -> None:
         """Update the per-item overlap markers in the Text panel."""
         if page is None:
             self._text_panel.set_overlaps(set())
             return
-        self._text_panel.set_overlaps(page.overlapping_block_indices())
+        self._text_panel.set_overlaps(
+            page.overlapping_block_indices(self._overlap_threshold())
+        )
 
     # ------------------------------------------------------------- selection
     def _on_box_selected(self, index: int) -> None:
@@ -1117,6 +1143,11 @@ class MoguraApp(_TkBase):
             return
         self._text_panel.add_block_with_box(box)
         self._status.config(text="Text item added.")
+        # Optionally OCR the freshly added item straight away.
+        if self._settings.get("auto_ocr_on_add") and ocr.is_available():
+            index = self._text_panel.selected_index
+            if index is not None:
+                self._on_ocr_requested(index)
 
     def _on_edit_requested(self, index: int) -> None:
         """Open the detailed edit dialog for the block at ``index``."""
@@ -1168,6 +1199,59 @@ class MoguraApp(_TkBase):
         if not dialog.result:
             return
         self._text_panel.apply_split(index, dialog.pieces)
+
+    def _on_ocr_requested(self, index) -> None:
+        """Run OCR on the selected block's region and fill in its text."""
+        if self._mokuro is None or self._archive is None:
+            return
+        page = self._mokuro.page_for(self._archive.page_name(self._current_page))
+        if page is None or not (0 <= index < len(page.blocks)):
+            return
+        if not ocr.is_available():
+            messagebox.showinfo("OCR unavailable", ocr.unavailable_reason())
+            return
+        block = page.blocks[index]
+        crop = self._crop_block(block)
+        if crop is None:
+            messagebox.showwarning(
+                "OCR", "No image region available to recognize."
+            )
+            return
+
+        self.config(cursor="watch")
+        self.update_idletasks()
+        try:
+            lines = ocr.recognize(crop, vertical=block.vertical)
+        except Exception as exc:  # noqa: BLE001 - runtime/engine errors
+            messagebox.showerror("OCR failed", f"OCR failed:\n{exc}")
+            return
+        finally:
+            self.config(cursor="")
+
+        if not lines:
+            messagebox.showinfo("OCR", "No text was detected in this region.")
+            return
+
+        block.lines = lines
+        self._mark_dirty()
+        self._text_panel.refresh()
+        self._text_panel.set_selected(index)
+        self._update_text_counts()
+        self._status.config(text=f"OCR filled in text for item {index + 1}.")
+
+    def _crop_block(self, block):
+        """Return the current page image cropped to ``block``'s box (or None)."""
+        if self._current_image is None:
+            return None
+        x1, y1, x2, y2 = (block.box + [0, 0, 0, 0])[:4]
+        if x2 - x1 < 1 or y2 - y1 < 1:
+            return None
+        iw, ih = self._current_image.size
+        x1 = max(0, min(iw, x1)); x2 = max(0, min(iw, x2))
+        y1 = max(0, min(ih, y1)); y2 = max(0, min(ih, y2))
+        if x2 - x1 < 1 or y2 - y1 < 1:
+            return None
+        return self._current_image.crop((x1, y1, x2, y2)).convert("RGB")
 
     def _on_blocks_changed(self) -> None:
         """Text blocks were added/removed/reordered in the right panel."""

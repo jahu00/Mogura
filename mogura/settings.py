@@ -24,6 +24,12 @@ _DEFAULTS: Dict[str, Any] = {
     "last_dir": "",
     # Which OCR backend to use. Only "RapidOCR" exists for now.
     "ocr_method": "RapidOCR",
+    # Minimum fraction (0..1) of the smaller box's area that must be covered
+    # for two text items to count as overlapping. Overlap below this is
+    # ignored (no warning marker).
+    "overlap_threshold": 0.0,
+    # Automatically run OCR on a newly added text item.
+    "auto_ocr_on_add": False,
 }
 
 

@@ -113,23 +113,41 @@ class MokuroPage:
         return result
 
     @staticmethod
-    def _boxes_overlap(a, b) -> bool:
-        """True if boxes ``a`` and ``b`` share interior area (touching edges
-        do not count)."""
+    def _boxes_overlap(a, b, threshold: float = 0.0) -> bool:
+        """True if boxes ``a`` and ``b`` overlap by at least ``threshold``.
+
+        ``threshold`` is the minimum fraction (0..1) of the smaller box's area
+        that must be covered by the intersection for the overlap to count. With
+        the default of ``0.0`` any shared interior area counts (touching edges
+        do not).
+        """
         ax1, ay1, ax2, ay2 = a
         bx1, by1, bx2, by2 = b
-        return ax1 < bx2 and bx1 < ax2 and ay1 < by2 and by1 < ay2
+        # Width/height of the intersection rectangle.
+        iw = min(ax2, bx2) - max(ax1, bx1)
+        ih = min(ay2, by2) - max(ay1, by1)
+        if iw <= 0 or ih <= 0:
+            return False
+        if threshold <= 0.0:
+            return True
+        inter = iw * ih
+        area_a = max(0, ax2 - ax1) * max(0, ay2 - ay1)
+        area_b = max(0, bx2 - bx1) * max(0, by2 - by1)
+        smaller = min(area_a, area_b)
+        if smaller <= 0:
+            return False
+        return (inter / smaller) >= threshold
 
-    def has_overlapping_boxes(self) -> bool:
+    def has_overlapping_boxes(self, threshold: float = 0.0) -> bool:
         """Return True if any two block bounding boxes overlap."""
         boxes = [b.box for b in self.blocks if len(b.box) == 4]
         for i in range(len(boxes)):
             for j in range(i + 1, len(boxes)):
-                if self._boxes_overlap(boxes[i], boxes[j]):
+                if self._boxes_overlap(boxes[i], boxes[j], threshold):
                     return True
         return False
 
-    def overlapping_block_indices(self) -> set:
+    def overlapping_block_indices(self, threshold: float = 0.0) -> set:
         """Return the set of block indices whose box overlaps another block."""
         boxes = [b.box if len(b.box) == 4 else None for b in self.blocks]
         result: set = set()
@@ -139,7 +157,7 @@ class MokuroPage:
             for j in range(i + 1, len(boxes)):
                 if boxes[j] is None:
                     continue
-                if self._boxes_overlap(boxes[i], boxes[j]):
+                if self._boxes_overlap(boxes[i], boxes[j], threshold):
                     result.add(i)
                     result.add(j)
         return result

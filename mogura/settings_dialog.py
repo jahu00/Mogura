@@ -4,9 +4,12 @@ A single window with a list of sections on the left and the settings for the
 selected section on the right. Sections are kept small and self-contained so
 new ones can be added without disturbing the others.
 
-Currently the only section is **OCR**, which shows whether the optional
-RapidOCR dependency is installed and lets the user pick which OCR method to
-use (only RapidOCR exists for now).
+Sections:
+
+* **OCR** - shows which OCR backends are installed and lets the user pick the
+  active method.
+* **Mokuro** - overlap-detection threshold and whether to auto-OCR newly added
+  text items.
 """
 
 from __future__ import annotations
@@ -21,13 +24,16 @@ from .settings import Settings
 class SettingsDialog(tk.Toplevel):
     """Modal settings window with a section list and per-section panels."""
 
-    def __init__(self, master, settings: Settings):
+    def __init__(self, master, settings: Settings, on_change=None):
         super().__init__(master)
         self.title("Settings")
         self.transient(master)
         self.minsize(560, 360)
 
         self._settings = settings
+        # Optional callback invoked when a setting that affects the live view
+        # (e.g. the overlap threshold) changes.
+        self._on_change = on_change
 
         # Map a section label to the frame that holds its widgets.
         self._sections: dict[str, tk.Frame] = {}
@@ -68,6 +74,7 @@ class SettingsDialog(tk.Toplevel):
         )
 
         self._add_section("OCR", self._build_ocr_section)
+        self._add_section("Mokuro", self._build_mokuro_section)
 
     def _add_section(self, label: str, builder) -> None:
         """Register a section: add it to the list and build its panel."""
@@ -138,6 +145,75 @@ class SettingsDialog(tk.Toplevel):
         method = self._ocr_method_var.get()
         self._settings.set("ocr_method", method)
         ocr.set_method(method)
+
+    # ---------------------------------------------------------- Mokuro panel
+    def _build_mokuro_section(self, parent: tk.Frame) -> None:
+        tk.Label(
+            parent, text="Mokuro", anchor=tk.W,
+            font=("TkDefaultFont", 11, "bold"),
+        ).pack(fill=tk.X, pady=(0, 10))
+
+        # Overlap threshold (percentage of the smaller box's area).
+        thr = tk.Frame(parent)
+        thr.pack(fill=tk.X, pady=2)
+        tk.Label(thr, text="Overlap threshold (%):", anchor=tk.W).pack(
+            side=tk.LEFT
+        )
+        stored = self._settings.get("overlap_threshold")
+        try:
+            initial_pct = int(round(float(stored) * 100))
+        except (TypeError, ValueError):
+            initial_pct = 0
+        self._overlap_var = tk.IntVar(value=max(0, min(100, initial_pct)))
+        spin = tk.Spinbox(
+            thr,
+            from_=0,
+            to=100,
+            increment=1,
+            width=6,
+            textvariable=self._overlap_var,
+            command=self._on_overlap_threshold,
+        )
+        spin.pack(side=tk.LEFT, padx=(6, 0))
+        # Also catch typed values (the command only fires on arrow clicks).
+        spin.bind("<FocusOut>", lambda _e: self._on_overlap_threshold())
+        spin.bind("<Return>", lambda _e: self._on_overlap_threshold())
+
+        tk.Label(
+            parent,
+            text="Overlap below this fraction of the smaller item's area is "
+            "ignored.",
+            anchor=tk.W,
+            fg="#666666",
+            wraplength=320,
+            justify=tk.LEFT,
+        ).pack(fill=tk.X, pady=(0, 10))
+
+        # Auto-OCR on add.
+        self._auto_ocr_var = tk.BooleanVar(
+            value=bool(self._settings.get("auto_ocr_on_add"))
+        )
+        tk.Checkbutton(
+            parent,
+            text="Automatically run OCR when adding a new text item",
+            variable=self._auto_ocr_var,
+            anchor=tk.W,
+            command=self._on_auto_ocr,
+        ).pack(fill=tk.X)
+
+    def _on_overlap_threshold(self) -> None:
+        try:
+            pct = int(self._overlap_var.get())
+        except (tk.TclError, ValueError):
+            return
+        pct = max(0, min(100, pct))
+        self._overlap_var.set(pct)
+        self._settings.set("overlap_threshold", pct / 100.0)
+        if self._on_change is not None:
+            self._on_change()
+
+    def _on_auto_ocr(self) -> None:
+        self._settings.set("auto_ocr_on_add", self._auto_ocr_var.get())
 
     # --------------------------------------------------------------- buttons
     def _build_buttons(self) -> None:
