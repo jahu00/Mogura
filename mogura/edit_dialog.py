@@ -19,7 +19,7 @@ from typing import Optional
 
 from PIL import Image, ImageTk
 
-from . import logging_setup, ocr
+from . import kanji_draw, logging_setup, ocr
 from .mokuro import TextBlock
 from .special_chars import SpecialCharButton
 from .text_render import render_text
@@ -172,6 +172,13 @@ class EditBlockDialog(tk.Toplevel):
             specials, target=self._text, on_insert=self._refresh_preview
         ).pack(side=tk.LEFT, padx=1)
 
+        self._draw_button = tk.Button(
+            specials, text="Draw…", command=self._on_draw_kanji
+        )
+        self._draw_button.pack(side=tk.LEFT, padx=1)
+        if not kanji_draw.is_available():
+            self._draw_button.config(state=tk.DISABLED)
+
         self._ocr_button = tk.Button(
             specials, text="OCR", command=self._on_ocr
         )
@@ -251,6 +258,20 @@ class EditBlockDialog(tk.Toplevel):
 
         self._text.delete("1.0", "end")
         self._text.insert("1.0", "\n".join(lines))
+        self._refresh_preview()
+
+    # ------------------------------------------------------------ kanji draw
+    def _on_draw_kanji(self) -> None:
+        """Open the handwriting dialog and insert chosen kanji into the text."""
+        if not kanji_draw.is_available():
+            messagebox.showinfo(
+                "Draw Kanji", kanji_draw.unavailable_reason(), parent=self
+            )
+            return
+        kanji_draw.KanjiDrawDialog(self, on_pick=self._insert_drawn_kanji)
+
+    def _insert_drawn_kanji(self, kanji: str) -> None:
+        self._text.insert(tk.INSERT, kanji)
         self._refresh_preview()
 
     # --------------------------------------------------------------- buttons
