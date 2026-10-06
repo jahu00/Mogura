@@ -51,6 +51,9 @@ class MoguraApp(_TkBase):
         self._settings = Settings()
         # Apply the saved OCR method to the dispatcher before any OCR runs.
         ocr.set_method(self._settings.get("ocr_method"))
+        # Apply the saved text-overlay layout and font to the renderer.
+        text_render.set_default_layout(self._settings.get("text_overlay_layout"))
+        text_render.set_default_font(self._settings.get("text_overlay_font"))
 
         self._archive: Optional[PageSource] = None
         self._mokuro: Optional[MokuroData] = None
@@ -473,7 +476,12 @@ class MoguraApp(_TkBase):
 
     def _on_settings_changed(self) -> None:
         """Re-apply view-affecting settings (e.g. overlap threshold) live."""
+        # Keep the renderer's layout and font in sync with the current settings.
+        text_render.set_default_layout(self._settings.get("text_overlay_layout"))
+        text_render.set_default_font(self._settings.get("text_overlay_font"))
         self._update_text_counts()
+        if self._overlay_mode:
+            self._refresh_displayed_image()
         if self._mokuro is not None and self._archive is not None:
             page = self._mokuro.page_for(
                 self._archive.page_name(self._current_page)

@@ -8,8 +8,10 @@ Sections:
 
 * **OCR** - shows which OCR backends are installed and lets the user pick the
   active method.
+* **Segmentation** - model health/download and reading-order layout.
 * **Mokuro** - overlap-detection threshold and whether to auto-OCR newly added
   text items.
+* **Editor** - how the rendered-text overlay/previews lay out glyphs.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from . import ocr, segmentation
+from . import fonts, ocr, segmentation
 from .settings import Settings
 
 
@@ -77,6 +79,7 @@ class SettingsDialog(tk.Toplevel):
         self._add_section("OCR", self._build_ocr_section)
         self._add_section("Segmentation", self._build_segmentation_section)
         self._add_section("Mokuro", self._build_mokuro_section)
+        self._add_section("Editor", self._build_editor_section)
 
     def _add_section(self, label: str, builder) -> None:
         """Register a section: add it to the list and build its panel."""
@@ -484,6 +487,108 @@ class SettingsDialog(tk.Toplevel):
 
     def _on_auto_ocr(self) -> None:
         self._settings.set("auto_ocr_on_add", self._auto_ocr_var.get())
+
+    # ---------------------------------------------------------- Editor panel
+    def _build_editor_section(self, parent: tk.Frame) -> None:
+        tk.Label(
+            parent, text="Editor", anchor=tk.W,
+            font=("TkDefaultFont", 11, "bold"),
+        ).pack(fill=tk.X, pady=(0, 10))
+
+        # Font selection.
+        font_row = tk.Frame(parent)
+        font_row.pack(fill=tk.X, pady=(0, 4))
+        tk.Label(font_row, text="Overlay font:", anchor=tk.W).pack(side=tk.LEFT)
+        font_names = fonts.available_fonts()
+        self._overlay_font_var = tk.StringVar(
+            value=self._settings.get("text_overlay_font")
+        )
+        if font_names and self._overlay_font_var.get() not in font_names:
+            self._overlay_font_var.set(font_names[0])
+        font_combo = ttk.Combobox(
+            font_row,
+            textvariable=self._overlay_font_var,
+            values=font_names,
+            state="readonly" if font_names else "disabled",
+            width=22,
+        )
+        font_combo.pack(side=tk.LEFT, padx=(6, 0))
+        font_combo.bind(
+            "<<ComboboxSelected>>", lambda _e: self._on_overlay_font()
+        )
+        tk.Label(
+            parent,
+            text="Bundled fonts used to render the text overlay and previews.",
+            anchor=tk.W,
+            fg="#666666",
+            wraplength=320,
+            justify=tk.LEFT,
+        ).pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Separator(parent, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(6, 10))
+
+        tk.Label(
+            parent,
+            text="How the rendered-text overlay and the edit/split/combine "
+            "previews lay out glyphs:",
+            anchor=tk.W,
+            wraplength=340,
+            justify=tk.LEFT,
+        ).pack(fill=tk.X)
+
+        self._overlay_layout_var = tk.StringVar(
+            value="default"
+            if self._settings.get("text_overlay_layout") == "default"
+            else "simplified"
+        )
+        tk.Radiobutton(
+            parent,
+            text="Simplified (fixed grid of square cells)",
+            variable=self._overlay_layout_var,
+            value="simplified",
+            anchor=tk.W,
+            command=self._on_overlay_layout,
+        ).pack(fill=tk.X, pady=(8, 0))
+        tk.Label(
+            parent,
+            text="Every glyph sits in an evenly sized square cell. Predictable "
+            "and tidy, but ignores the font's natural proportional spacing.",
+            anchor=tk.W,
+            fg="#666666",
+            wraplength=320,
+            justify=tk.LEFT,
+        ).pack(fill=tk.X, padx=(24, 0))
+
+        tk.Radiobutton(
+            parent,
+            text="Default (font's natural layout)",
+            variable=self._overlay_layout_var,
+            value="default",
+            anchor=tk.W,
+            command=self._on_overlay_layout,
+        ).pack(fill=tk.X, pady=(8, 0))
+        tk.Label(
+            parent,
+            text="Glyphs flow along each line using the font's own advances, "
+            "while lines are still spread to fill the box. Closer to real "
+            "typography, but less uniform.",
+            anchor=tk.W,
+            fg="#666666",
+            wraplength=320,
+            justify=tk.LEFT,
+        ).pack(fill=tk.X, padx=(24, 0))
+
+    def _on_overlay_layout(self) -> None:
+        self._settings.set(
+            "text_overlay_layout", self._overlay_layout_var.get()
+        )
+        if self._on_change is not None:
+            self._on_change()
+
+    def _on_overlay_font(self) -> None:
+        self._settings.set("text_overlay_font", self._overlay_font_var.get())
+        if self._on_change is not None:
+            self._on_change()
 
     # --------------------------------------------------------------- buttons
     def _build_buttons(self) -> None:

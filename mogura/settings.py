@@ -42,6 +42,18 @@ _DEFAULTS: Dict[str, Any] = {
     # Reading-order layout for detected segmentation blocks. True orders blocks
     # right-to-left (manga); False orders them left-to-right (Western comics).
     "segmentation_rtl": True,
+    # How the rendered-text overlay/preview lays out glyphs. Either:
+    #   "simplified" - each glyph sits in a fixed square cell on a grid, and
+    #                  lines are spread to fill the box. Predictable, but
+    #                  ignores the font's natural proportional spacing.
+    #   "default"    - the font's natural glyph advances flow each line, while
+    #                  lines are still spread to fill the box. Closer to real
+    #                  typography, but less uniform.
+    "text_overlay_layout": "simplified",
+    # Which bundled font the overlay/previews render with. Matches a key in
+    # mogura.fonts.available_fonts(); "" (or an unknown value) falls back to a
+    # system Japanese font.
+    "text_overlay_font": "Noto Sans JP",
 }
 
 

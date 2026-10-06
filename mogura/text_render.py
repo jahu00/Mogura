@@ -5,6 +5,18 @@ image that mimics how the text is laid out (horizontal rows, or vertical
 columns running right-to-left as in Japanese vertical writing). It is meant as
 a rough visual comparison against the original cropped page region, not a
 faithful typographic reproduction.
+
+Two layouts are offered (selectable via the Editor settings section):
+
+* ``"simplified"`` - every glyph occupies a fixed square cell on a grid, so
+  the text reads as an even matrix of characters. Predictable and tidy, but it
+  ignores the font's natural proportional spacing.
+* ``"default"`` - glyphs flow along each line using the font's own advances
+  (proportional horizontal spacing, natural vertical rhythm). Closer to real
+  typography. In both layouts the lines/columns are spread to fill the box.
+
+Callers may pass ``layout=`` explicitly; otherwise the module-level default
+(set from settings via :func:`set_default_layout`) is used.
 """
 
 from __future__ import annotations
@@ -14,7 +26,10 @@ from typing import List, Optional
 
 from PIL import Image, ImageDraw, ImageFont
 
-# Candidate Japanese-capable fonts, in order of preference.
+from . import fonts as _fonts
+
+# Candidate Japanese-capable system fonts, used only as a fallback when no
+# bundled font has been selected (or the selected one is missing).
 _FONT_CANDIDATES = [
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf",
@@ -24,8 +39,51 @@ _FONT_CANDIDATES = [
 
 _font_path_cache: Optional[str] = None
 
+# Absolute path of the user-selected bundled font (set via set_default_font).
+# ``None`` means fall back to a system Japanese font.
+_selected_font_path: Optional[str] = None
+
+# Layout identifiers.
+LAYOUT_SIMPLIFIED = "simplified"
+LAYOUT_DEFAULT = "default"
+
+# Module-level default layout, applied when a caller doesn't pass ``layout``.
+# Kept here (rather than threaded through every dialog) so the various preview
+# widgets pick up the user's choice without each needing a Settings handle.
+_default_layout = LAYOUT_SIMPLIFIED
+
+
+def set_default_layout(layout: str) -> None:
+    """Set the layout used when callers don't pass one explicitly."""
+    global _default_layout
+    _default_layout = LAYOUT_DEFAULT if layout == LAYOUT_DEFAULT else LAYOUT_SIMPLIFIED
+
+
+def set_default_font(name: str) -> None:
+    """Select the bundled font (by name) used for rendering.
+
+    An unknown or empty ``name`` clears the selection, falling back to a system
+    Japanese font. Cached fonts are invalidated so the change takes effect.
+    """
+    global _selected_font_path
+    _selected_font_path = _fonts.font_path(name) if name else None
+    _font_cache.clear()
+
+
+def _resolve_layout(layout: Optional[str]) -> str:
+    if layout is None:
+        return _default_layout
+    return LAYOUT_DEFAULT if layout == LAYOUT_DEFAULT else LAYOUT_SIMPLIFIED
+
+
+# Cache of loaded truetype fonts, keyed by (path, size).
+_font_cache: dict = {}
+
 
 def _font_path() -> Optional[str]:
+    # A user-selected bundled font takes precedence over system candidates.
+    if _selected_font_path is not None:
+        return _selected_font_path
     global _font_path_cache
     if _font_path_cache is not None:
         return _font_path_cache
@@ -40,8 +98,14 @@ def _load_font(size: int) -> ImageFont.ImageFont:
     size = max(6, int(size))
     path = _font_path()
     if path is not None:
+        key = (path, size)
+        cached = _font_cache.get(key)
+        if cached is not None:
+            return cached
         try:
-            return ImageFont.truetype(path, size)
+            font = ImageFont.truetype(path, size)
+            _font_cache[key] = font
+            return font
         except Exception:  # noqa: BLE001
             pass
     return ImageFont.load_default()
@@ -73,6 +137,62 @@ def _fit_font(cell: float):
     return font, asc2
 
 
+def _fit_font_default(lines: List[str], vertical: bool, width: float, height: float):
+    """Size a font for the *default* layout, honouring natural glyph advances.
+
+    Returns ``(font, ascent, line_height)`` where ``line_height`` is the full
+    em (ascent+descent) of the chosen font -- used both as the per-row height
+    (horizontal) and the per-character advance (vertical).
+
+    The font is chosen so the text roughly fills the box in both axes: lines
+    are capped to fit the cross-axis, and the longest line (its natural pixel
+    width, horizontal) or column (its character count, vertical) is capped to
+    fit the main axis.
+    """
+    width = max(6.0, width)
+    height = max(6.0, height)
+    num_lines = max(1, len(lines))
+
+    probe = _load_font(100)
+    try:
+        asc, desc = probe.getmetrics()
+    except Exception:  # noqa: BLE001
+        asc, desc = 80, 20
+    em = asc + desc or 100
+
+    if vertical:
+        # Columns span the width; characters stack down the height.
+        max_len = max((len(ln) for ln in lines), default=1) or 1
+        point_w = (width / num_lines) * 100 / em
+        point_h = (height / max_len) * 100 / em
+        point = min(point_w, point_h)
+    else:
+        # Rows stack down the height; glyphs run along the width naturally.
+        max_width = 1.0
+        for ln in lines:
+            if not ln:
+                continue
+            try:
+                w = probe.getlength(ln)
+            except Exception:  # noqa: BLE001
+                w = len(ln) * em
+            if w > max_width:
+                max_width = w
+        point_h = (height / num_lines) * 100 / em
+        point_w = width * 100 / max_width if max_width > 0 else point_h
+        point = min(point_h, point_w)
+
+    point = max(6, int(point))
+    font = _load_font(point)
+    try:
+        asc2, desc2 = font.getmetrics()
+    except Exception:  # noqa: BLE001
+        asc2 = int(point * asc / em)
+        desc2 = int(point * desc / em)
+    line_height = max(6.0, float(asc2 + desc2))
+    return font, asc2, line_height
+
+
 def render_text(
     lines: List[str],
     vertical: bool,
@@ -80,6 +200,7 @@ def render_text(
     height: int,
     bg: str = "#ffffff",
     fg: str = "#000000",
+    layout: Optional[str] = None,
 ) -> Image.Image:
     """Render ``lines`` into a ``width`` x ``height`` image.
 
@@ -96,24 +217,7 @@ def render_text(
         return image
 
     draw = ImageDraw.Draw(image)
-    num_lines = len(lines)
-    max_len = max((len(ln) for ln in lines), default=1) or 1
-
-    # Choose a cell size (approx square per CJK glyph) that fits the box in
-    # both directions given the line/column counts.
-    if vertical:
-        # columns across width, characters down height
-        cell = min(width / num_lines, height / max_len)
-    else:
-        # rows down height, characters across width
-        cell = min(height / num_lines, width / max_len)
-    cell = max(6.0, cell)
-    font, ascent = _fit_font(cell)
-
-    if vertical:
-        _draw_vertical(draw, lines, font, ascent, width, height, cell, fg)
-    else:
-        _draw_horizontal(draw, lines, font, ascent, width, height, cell, fg)
+    _render_onto(draw, lines, vertical, width, height, fg, _resolve_layout(layout))
     return image
 
 
@@ -123,6 +227,7 @@ def render_text_rgba(
     width: int,
     height: int,
     fg: str = "#ff0000",
+    layout: Optional[str] = None,
 ) -> Image.Image:
     """Render ``lines`` onto a transparent RGBA image in colour ``fg``.
 
@@ -137,19 +242,7 @@ def render_text_rgba(
         return image
 
     draw = ImageDraw.Draw(image)
-    num_lines = len(lines)
-    max_len = max((len(ln) for ln in lines), default=1) or 1
-    if vertical:
-        cell = min(width / num_lines, height / max_len)
-    else:
-        cell = min(height / num_lines, width / max_len)
-    cell = max(6.0, cell)
-    font, ascent = _fit_font(cell)
-
-    if vertical:
-        _draw_vertical(draw, lines, font, ascent, width, height, cell, fg)
-    else:
-        _draw_horizontal(draw, lines, font, ascent, width, height, cell, fg)
+    _render_onto(draw, lines, vertical, width, height, fg, _resolve_layout(layout))
     return image
 
 
@@ -158,6 +251,7 @@ def overlay_render_on_image(
     lines: List[str],
     vertical: bool,
     fg: str = "#e53935",
+    layout: Optional[str] = None,
 ) -> Image.Image:
     """Overlay an approximate text render (in ``fg``) on ``original``.
 
@@ -166,12 +260,37 @@ def overlay_render_on_image(
     """
     base = original.convert("RGBA")
     w, h = base.size
-    overlay = render_text_rgba(lines, vertical, w, h, fg=fg)
+    overlay = render_text_rgba(lines, vertical, w, h, fg=fg, layout=layout)
     return Image.alpha_composite(base, overlay).convert("RGB")
 
 
 # A small margin inset applied once to the whole render (not per glyph).
 _MARGIN = 2
+
+
+def _render_onto(draw, lines, vertical, width, height, fg, layout) -> None:
+    """Dispatch to the chosen layout's drawing routine."""
+    if layout == LAYOUT_DEFAULT:
+        font, ascent, line_h = _fit_font_default(lines, vertical, width, height)
+        if vertical:
+            _draw_vertical_default(draw, lines, font, ascent, width, height, line_h, fg)
+        else:
+            _draw_horizontal_default(draw, lines, font, ascent, width, height, line_h, fg)
+        return
+
+    # Simplified: fixed square cells on a grid.
+    num_lines = len(lines)
+    max_len = max((len(ln) for ln in lines), default=1) or 1
+    if vertical:
+        cell = min(width / num_lines, height / max_len)
+    else:
+        cell = min(height / num_lines, width / max_len)
+    cell = max(6.0, cell)
+    font, ascent = _fit_font(cell)
+    if vertical:
+        _draw_vertical(draw, lines, font, ascent, width, height, cell, fg)
+    else:
+        _draw_horizontal(draw, lines, font, ascent, width, height, cell, fg)
 
 
 def _line_pitch(available: float, num_lines: int, cell: float) -> float:
@@ -186,6 +305,7 @@ def _line_pitch(available: float, num_lines: int, cell: float) -> float:
     return max(cell, available / num_lines)
 
 
+# --------------------------------------------------------------- simplified
 def _draw_horizontal(draw, lines, font, ascent, width, height, cell, fg) -> None:
     # Rows stack down the height (the cross-axis); spread them to fill it.
     avail = height - 2 * _MARGIN
@@ -213,3 +333,30 @@ def _draw_vertical(draw, lines, font, ascent, width, height, cell, fg) -> None:
             baseline = cell_top + ascent
             draw.text((x, baseline), ch, font=font, fill=fg, anchor="ls")
             cell_top += cell
+
+
+# ------------------------------------------------------------------ default
+def _draw_horizontal_default(draw, lines, font, ascent, width, height, line_h, fg) -> None:
+    # Rows stack down the height (spread to fill it); each line flows along the
+    # width using the font's natural proportional advances.
+    avail = height - 2 * _MARGIN
+    pitch = _line_pitch(avail, len(lines), line_h)
+    for i, line in enumerate(lines):
+        cell_top = _MARGIN + i * pitch + (pitch - line_h) / 2
+        baseline = cell_top + ascent
+        draw.text((_MARGIN, baseline), line, font=font, fill=fg, anchor="ls")
+
+
+def _draw_vertical_default(draw, lines, font, ascent, width, height, line_h, fg) -> None:
+    # Columns run right-to-left (spread across the width); characters stack down
+    # each column advancing by the font's natural line height.
+    avail = width - 2 * _MARGIN
+    pitch = _line_pitch(avail, len(lines), line_h)
+    for col, line in enumerate(lines):
+        center = width - _MARGIN - (col + 0.5) * pitch
+        cell_top = float(_MARGIN)
+        for ch in line:
+            baseline = cell_top + ascent
+            # Center each glyph horizontally within its column slot.
+            draw.text((center, baseline), ch, font=font, fill=fg, anchor="ms")
+            cell_top += line_h
