@@ -1370,7 +1370,9 @@ class MoguraApp(_TkBase):
         if page is None or not (0 <= index < len(page.blocks)):
             return
         block = page.blocks[index]
-        dialog = EditBlockDialog(self, block, self._current_image)
+        dialog = EditBlockDialog(
+            self, block, self._current_image, settings=self._settings
+        )
         self.wait_window(dialog)
         if dialog.result:
             # The block was modified in place; refresh UI and mark dirty.

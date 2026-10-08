@@ -19,8 +19,9 @@ from typing import Optional
 
 from PIL import Image, ImageTk
 
-from . import kanji_draw, logging_setup, ocr
+from . import kanji_draw, kanji_ocr, logging_setup, ocr
 from .mokuro import TextBlock
+from .settings import Settings
 from .special_chars import SpecialCharButton
 from .text_render import render_text
 
@@ -33,7 +34,13 @@ _PREVIEW = 220
 class EditBlockDialog(tk.Toplevel):
     """Modal dialog to edit a single text block's text, orientation, and box."""
 
-    def __init__(self, master, block: TextBlock, page_image: Optional[Image.Image]):
+    def __init__(
+        self,
+        master,
+        block: TextBlock,
+        page_image: Optional[Image.Image],
+        settings: Optional[Settings] = None,
+    ):
         super().__init__(master)
         self.title(f"Edit Text Item")
         self.transient(master)
@@ -41,6 +48,7 @@ class EditBlockDialog(tk.Toplevel):
 
         self._block = block
         self._page_image = page_image
+        self._settings = settings
         self.result = False  # set True if applied
 
         # Tk variables for the editable fields.
@@ -176,7 +184,7 @@ class EditBlockDialog(tk.Toplevel):
             specials, text="Draw…", command=self._on_draw_kanji
         )
         self._draw_button.pack(side=tk.LEFT, padx=1)
-        if not kanji_draw.is_available():
+        if not (kanji_draw.is_available() or kanji_ocr.is_available()):
             self._draw_button.config(state=tk.DISABLED)
 
         self._ocr_button = tk.Button(
@@ -261,8 +269,24 @@ class EditBlockDialog(tk.Toplevel):
         self._refresh_preview()
 
     # ------------------------------------------------------------ kanji draw
+    def _kanji_input_method(self) -> str:
+        """Return the configured kanji input method ("kanjidraw" or "ocr")."""
+        if self._settings is not None:
+            method = self._settings.get("kanji_input_method")
+            if method == "ocr":
+                return "ocr"
+        return "kanjidraw"
+
     def _on_draw_kanji(self) -> None:
         """Open the handwriting dialog and insert chosen kanji into the text."""
+        if self._kanji_input_method() == "ocr":
+            if not kanji_ocr.is_available():
+                messagebox.showinfo(
+                    "Draw Kanji", kanji_ocr.unavailable_reason(), parent=self
+                )
+                return
+            kanji_ocr.KanjiOcrDialog(self, on_pick=self._insert_drawn_kanji)
+            return
         if not kanji_draw.is_available():
             messagebox.showinfo(
                 "Draw Kanji", kanji_draw.unavailable_reason(), parent=self

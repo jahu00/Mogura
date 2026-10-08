@@ -54,6 +54,13 @@ _DEFAULTS: Dict[str, Any] = {
     # mogura.fonts.available_fonts(); "" (or an unknown value) falls back to a
     # system Japanese font.
     "text_overlay_font": "Noto Sans JP",
+    # How the "Draw…" button in the edit dialog lets the user hand-write a
+    # character. Either:
+    #   "kanjidraw" - stroke-order recognition via the optional 'kanjidraw'
+    #                 package (candidates update live as you draw).
+    #   "ocr"       - draw the character freehand, then recognize it with the
+    #                 active OCR backend (works without 'kanjidraw').
+    "kanji_input_method": "kanjidraw",
 }
 
 

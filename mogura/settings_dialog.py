@@ -20,7 +20,7 @@ import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from . import fonts, ocr, segmentation
+from . import fonts, kanji_draw, ocr, segmentation
 from .settings import Settings
 
 
@@ -79,6 +79,7 @@ class SettingsDialog(tk.Toplevel):
         self._add_section("OCR", self._build_ocr_section)
         self._add_section("Segmentation", self._build_segmentation_section)
         self._add_section("Mokuro", self._build_mokuro_section)
+        self._add_section("Input", self._build_input_section)
         self._add_section("Editor", self._build_editor_section)
 
     def _add_section(self, label: str, builder) -> None:
@@ -487,6 +488,94 @@ class SettingsDialog(tk.Toplevel):
 
     def _on_auto_ocr(self) -> None:
         self._settings.set("auto_ocr_on_add", self._auto_ocr_var.get())
+
+    # ----------------------------------------------------------- Input panel
+    def _build_input_section(self, parent: tk.Frame) -> None:
+        tk.Label(
+            parent, text="Input", anchor=tk.W,
+            font=("TkDefaultFont", 11, "bold"),
+        ).pack(fill=tk.X, pady=(0, 10))
+
+        tk.Label(
+            parent,
+            text="The \u201cDraw\u2026\u201d button in the text-item editor lets "
+            "you hand-write a character to insert. Choose how it recognizes "
+            "what you draw:",
+            anchor=tk.W,
+            wraplength=340,
+            justify=tk.LEFT,
+        ).pack(fill=tk.X)
+
+        self._kanji_method_var = tk.StringVar(
+            value="ocr"
+            if self._settings.get("kanji_input_method") == "ocr"
+            else "kanjidraw"
+        )
+        tk.Radiobutton(
+            parent,
+            text="KanjiDraw (stroke-order recognition)",
+            variable=self._kanji_method_var,
+            value="kanjidraw",
+            anchor=tk.W,
+            command=self._on_kanji_method,
+        ).pack(fill=tk.X, pady=(8, 0))
+        tk.Label(
+            parent,
+            text="Matches your strokes against a kanji database as you draw. "
+            "Needs the optional 'kanjidraw' package.",
+            anchor=tk.W,
+            fg="#666666",
+            wraplength=320,
+            justify=tk.LEFT,
+        ).pack(fill=tk.X, padx=(24, 0))
+
+        tk.Radiobutton(
+            parent,
+            text="OCR (recognize the drawing)",
+            variable=self._kanji_method_var,
+            value="ocr",
+            anchor=tk.W,
+            command=self._on_kanji_method,
+        ).pack(fill=tk.X, pady=(8, 0))
+        tk.Label(
+            parent,
+            text="Draw the character freehand, then recognize it with the "
+            "active OCR backend. Works without 'kanjidraw'.",
+            anchor=tk.W,
+            fg="#666666",
+            wraplength=320,
+            justify=tk.LEFT,
+        ).pack(fill=tk.X, padx=(24, 0))
+
+        # KanjiDraw install status.
+        ttk.Separator(parent, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(16, 10))
+        status = tk.Frame(parent)
+        status.pack(fill=tk.X, pady=2)
+        row = tk.Frame(status)
+        row.pack(fill=tk.X, pady=1)
+        tk.Label(
+            row, text="kanjidraw installed:", anchor=tk.W, width=20
+        ).pack(side=tk.LEFT)
+        kd_ok = kanji_draw.is_available()
+        tk.Label(
+            row,
+            text="Yes" if kd_ok else "No",
+            fg="#2e7d32" if kd_ok else "#c62828",
+            font=("TkDefaultFont", 9, "bold"),
+        ).pack(side=tk.LEFT, padx=(6, 0))
+        if not kd_ok:
+            tk.Label(
+                parent,
+                text="Install it in the virtualenv with:\n"
+                "    ./venv/bin/pip install kanjidraw",
+                anchor=tk.W,
+                fg="#666666",
+                wraplength=340,
+                justify=tk.LEFT,
+            ).pack(fill=tk.X, pady=(6, 0))
+
+    def _on_kanji_method(self) -> None:
+        self._settings.set("kanji_input_method", self._kanji_method_var.get())
 
     # ---------------------------------------------------------- Editor panel
     def _build_editor_section(self, parent: tk.Frame) -> None:
