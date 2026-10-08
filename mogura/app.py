@@ -7,6 +7,8 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from typing import Optional
 
+from PIL import ImageOps
+
 from .cbz import CbzArchive
 from .combine_dialog import CombineDialog
 from .edit_dialog import EditBlockDialog
@@ -1523,6 +1525,11 @@ class MoguraApp(_TkBase):
             return None
         if self._ocr_segmentation_mode() == "mask":
             prepared = segmentation.mask_crop(crop)
+            if prepared is None:
+                return None
+            # The raw mask is white text on black; invert to black text on
+            # white, which recognizers handle more reliably.
+            prepared = ImageOps.invert(prepared.convert("L"))
         else:
             prepared = segmentation.clean_crop(crop)
         if prepared is None:
@@ -1621,6 +1628,9 @@ class MoguraApp(_TkBase):
                     boxes, cleaned_page = segmentation.detect_and_mask(
                         self._current_image, right_to_left=rtl
                     )
+                    # The mask is white text on black; invert to black text on
+                    # white so the recognizer sees the polarity it expects.
+                    cleaned_page = ImageOps.invert(cleaned_page.convert("L"))
                 else:
                     boxes, cleaned_page = segmentation.detect_and_clean(
                         self._current_image, right_to_left=rtl
