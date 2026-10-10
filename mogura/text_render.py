@@ -52,6 +52,13 @@ LAYOUT_DEFAULT = "default"
 # widgets pick up the user's choice without each needing a Settings handle.
 _default_layout = LAYOUT_SIMPLIFIED
 
+# Multiplier applied to the fitted glyph size (1.0 == natural box-fitting
+# size). Larger values enlarge the glyphs; most visible with the simplified
+# fixed-grid layout, where the grid pitch stays put while characters grow.
+_SCALE_MIN = 0.5
+_SCALE_MAX = 3.0
+_font_scale = 1.0
+
 
 def set_default_layout(layout: str) -> None:
     """Set the layout used when callers don't pass one explicitly."""
@@ -59,15 +66,25 @@ def set_default_layout(layout: str) -> None:
     _default_layout = LAYOUT_DEFAULT if layout == LAYOUT_DEFAULT else LAYOUT_SIMPLIFIED
 
 
-def set_default_font(name: str) -> None:
-    """Select the bundled font (by name) used for rendering.
+def set_default_font(name: str, weight: str = _fonts.DEFAULT_WEIGHT) -> None:
+    """Select the bundled font (by name + weight) used for rendering.
 
     An unknown or empty ``name`` clears the selection, falling back to a system
     Japanese font. Cached fonts are invalidated so the change takes effect.
     """
     global _selected_font_path
-    _selected_font_path = _fonts.font_path(name) if name else None
+    _selected_font_path = _fonts.font_path(name, weight) if name else None
     _font_cache.clear()
+
+
+def set_default_font_scale(scale: float) -> None:
+    """Set the glyph-size multiplier, clamped to a sensible range."""
+    global _font_scale
+    try:
+        value = float(scale)
+    except (TypeError, ValueError):
+        value = 1.0
+    _font_scale = max(_SCALE_MIN, min(_SCALE_MAX, value))
 
 
 def _resolve_layout(layout: Optional[str]) -> str:
@@ -128,7 +145,7 @@ def _fit_font(cell: float):
     except Exception:  # noqa: BLE001
         asc, desc = 80, 20
     em = asc + desc or 100
-    point = max(6, int(cell * 100 / em))
+    point = max(6, int(cell * 100 / em * _font_scale))
     font = _load_font(point)
     try:
         asc2, _desc2 = font.getmetrics()
@@ -182,7 +199,7 @@ def _fit_font_default(lines: List[str], vertical: bool, width: float, height: fl
         point_w = width * 100 / max_width if max_width > 0 else point_h
         point = min(point_h, point_w)
 
-    point = max(6, int(point))
+    point = max(6, int(point * _font_scale))
     font = _load_font(point)
     try:
         asc2, desc2 = font.getmetrics()

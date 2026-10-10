@@ -56,7 +56,16 @@ class MoguraApp(_TkBase):
         ocr.set_method(self._settings.get("ocr_method"))
         # Apply the saved text-overlay layout and font to the renderer.
         text_render.set_default_layout(self._settings.get("text_overlay_layout"))
-        text_render.set_default_font(self._settings.get("text_overlay_font"))
+        text_render.set_default_font(
+            self._settings.get("text_overlay_font"),
+            self._settings.get("text_overlay_font_weight"),
+        )
+        text_render.set_default_font_scale(
+            self._settings.get("text_overlay_font_scale")
+        )
+        # Main-window overlay colour/opacity (applied in _compose_text_overlay).
+        self._overlay_color = self._settings.get("text_overlay_color")
+        self._overlay_opacity = self._settings.get("text_overlay_opacity")
 
         self._archive: Optional[PageSource] = None
         self._mokuro: Optional[MokuroData] = None
@@ -509,7 +518,15 @@ class MoguraApp(_TkBase):
         """Re-apply view-affecting settings (e.g. overlap threshold) live."""
         # Keep the renderer's layout and font in sync with the current settings.
         text_render.set_default_layout(self._settings.get("text_overlay_layout"))
-        text_render.set_default_font(self._settings.get("text_overlay_font"))
+        text_render.set_default_font(
+            self._settings.get("text_overlay_font"),
+            self._settings.get("text_overlay_font_weight"),
+        )
+        text_render.set_default_font_scale(
+            self._settings.get("text_overlay_font_scale")
+        )
+        self._overlay_color = self._settings.get("text_overlay_color")
+        self._overlay_opacity = self._settings.get("text_overlay_opacity")
         self._update_text_counts()
         if self._overlay_mode:
             self._refresh_displayed_image()
@@ -667,8 +684,15 @@ class MoguraApp(_TkBase):
             if not lines:
                 continue
             overlay = text_render.render_text_rgba(
-                block.lines, block.vertical, w, h, fg="#e53935"
+                block.lines, block.vertical, w, h, fg=self._overlay_color
             )
+            opacity = self._overlay_opacity
+            if opacity < 1.0:
+                # Scale the alpha channel uniformly to fade the whole overlay.
+                alpha = overlay.getchannel("A").point(
+                    lambda a: int(a * max(0.0, min(1.0, opacity)))
+                )
+                overlay.putalpha(alpha)
             composed.alpha_composite(overlay, dest=(x1, y1))
         return composed.convert("RGB")
 

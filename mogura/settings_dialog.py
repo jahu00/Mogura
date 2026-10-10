@@ -20,6 +20,8 @@ import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 
+from tkinter import colorchooser
+
 from . import fonts, kanji_draw, ocr, segmentation
 from .settings import Settings
 
@@ -569,12 +571,135 @@ class SettingsDialog(tk.Toplevel):
             width=22,
         )
         font_combo.pack(side=tk.LEFT, padx=(6, 0))
+        self._overlay_font_combo = font_combo
         font_combo.bind(
             "<<ComboboxSelected>>", lambda _e: self._on_overlay_font()
         )
         tk.Label(
             parent,
             text="Bundled fonts used to render the text overlay and previews.",
+            anchor=tk.W,
+            fg="#666666",
+            wraplength=320,
+            justify=tk.LEFT,
+        ).pack(fill=tk.X, pady=(0, 10))
+
+        # Font weight selection (depends on the chosen family).
+        weight_row = tk.Frame(parent)
+        weight_row.pack(fill=tk.X, pady=(0, 4))
+        tk.Label(weight_row, text="Font weight:", anchor=tk.W).pack(side=tk.LEFT)
+        self._overlay_weight_var = tk.StringVar(
+            value=self._settings.get("text_overlay_font_weight")
+        )
+        self._overlay_weight_combo = ttk.Combobox(
+            weight_row,
+            textvariable=self._overlay_weight_var,
+            state="readonly",
+            width=22,
+        )
+        self._overlay_weight_combo.pack(side=tk.LEFT, padx=(6, 0))
+        self._overlay_weight_combo.bind(
+            "<<ComboboxSelected>>", lambda _e: self._on_overlay_weight()
+        )
+        self._refresh_weight_choices()
+        tk.Label(
+            parent,
+            text="Heavier weights render bolder, thicker glyphs.",
+            anchor=tk.W,
+            fg="#666666",
+            wraplength=320,
+            justify=tk.LEFT,
+        ).pack(fill=tk.X, pady=(0, 10))
+
+        # Font size multiplier.
+        scale_row = tk.Frame(parent)
+        scale_row.pack(fill=tk.X, pady=(0, 4))
+        tk.Label(scale_row, text="Font size (%):", anchor=tk.W).pack(
+            side=tk.LEFT
+        )
+        stored_scale = self._settings.get("text_overlay_font_scale")
+        try:
+            initial_scale_pct = int(round(float(stored_scale) * 100))
+        except (TypeError, ValueError):
+            initial_scale_pct = 100
+        initial_scale_pct = max(50, min(300, initial_scale_pct))
+        self._overlay_scale_var = tk.IntVar(value=initial_scale_pct)
+        scale_spin = tk.Spinbox(
+            scale_row,
+            from_=50,
+            to=300,
+            increment=10,
+            width=6,
+            textvariable=self._overlay_scale_var,
+            command=self._on_overlay_scale,
+        )
+        scale_spin.pack(side=tk.LEFT, padx=(6, 0))
+        self._overlay_scale_var.trace_add("write", self._on_overlay_scale_edit)
+        scale_spin.bind("<FocusOut>", lambda _e: self._on_overlay_scale())
+        scale_spin.bind("<Return>", lambda _e: self._on_overlay_scale())
+        tk.Label(
+            parent,
+            text="Scales the rendered glyphs relative to their natural "
+            "box-fitting size. Most useful with the simplified grid layout, "
+            "where glyphs grow while the grid spacing stays put.",
+            anchor=tk.W,
+            fg="#666666",
+            wraplength=320,
+            justify=tk.LEFT,
+        ).pack(fill=tk.X, pady=(0, 10))
+
+        # Overlay colour (main window).
+        color_row = tk.Frame(parent)
+        color_row.pack(fill=tk.X, pady=(0, 4))
+        tk.Label(color_row, text="Overlay colour:", anchor=tk.W).pack(
+            side=tk.LEFT
+        )
+        self._overlay_color_value = self._normalize_color(
+            self._settings.get("text_overlay_color")
+        )
+        self._overlay_color_swatch = tk.Label(
+            color_row,
+            width=4,
+            relief=tk.SUNKEN,
+            bd=1,
+            bg=self._overlay_color_value,
+        )
+        self._overlay_color_swatch.pack(side=tk.LEFT, padx=(6, 6))
+        tk.Button(
+            color_row, text="Choose…", command=self._on_overlay_color
+        ).pack(side=tk.LEFT)
+
+        # Overlay opacity (main window).
+        opacity_row = tk.Frame(parent)
+        opacity_row.pack(fill=tk.X, pady=(4, 4))
+        tk.Label(opacity_row, text="Overlay opacity (%):", anchor=tk.W).pack(
+            side=tk.LEFT
+        )
+        stored_opacity = self._settings.get("text_overlay_opacity")
+        try:
+            initial_opacity_pct = int(round(float(stored_opacity) * 100))
+        except (TypeError, ValueError):
+            initial_opacity_pct = 100
+        initial_opacity_pct = max(0, min(100, initial_opacity_pct))
+        self._overlay_opacity_var = tk.IntVar(value=initial_opacity_pct)
+        opacity_spin = tk.Spinbox(
+            opacity_row,
+            from_=0,
+            to=100,
+            increment=5,
+            width=6,
+            textvariable=self._overlay_opacity_var,
+            command=self._on_overlay_opacity,
+        )
+        opacity_spin.pack(side=tk.LEFT, padx=(6, 0))
+        self._overlay_opacity_var.trace_add(
+            "write", self._on_overlay_opacity_edit
+        )
+        opacity_spin.bind("<FocusOut>", lambda _e: self._on_overlay_opacity())
+        opacity_spin.bind("<Return>", lambda _e: self._on_overlay_opacity())
+        tk.Label(
+            parent,
+            text="Colour and opacity of the text overlay in the main window.",
             anchor=tk.W,
             fg="#666666",
             wraplength=320,
@@ -643,6 +768,101 @@ class SettingsDialog(tk.Toplevel):
 
     def _on_overlay_font(self) -> None:
         self._settings.set("text_overlay_font", self._overlay_font_var.get())
+        # The available weights depend on the family; refresh and persist any
+        # fallback the family change forces.
+        self._refresh_weight_choices()
+        self._settings.set(
+            "text_overlay_font_weight", self._overlay_weight_var.get()
+        )
+        if self._on_change is not None:
+            self._on_change()
+
+    def _refresh_weight_choices(self) -> None:
+        """Populate the weight dropdown for the current family selection."""
+        family = self._overlay_font_var.get()
+        weights = fonts.available_weights(family)
+        self._overlay_weight_combo.config(
+            values=weights, state="readonly" if weights else "disabled"
+        )
+        current = self._overlay_weight_var.get()
+        if weights and current not in weights:
+            self._overlay_weight_var.set(fonts.resolve_weight(family, current))
+
+    def _on_overlay_weight(self) -> None:
+        self._settings.set(
+            "text_overlay_font_weight", self._overlay_weight_var.get()
+        )
+        if self._on_change is not None:
+            self._on_change()
+
+    def _on_overlay_scale_edit(self, *_args) -> None:
+        """Persist the size multiplier live while the value is in range."""
+        try:
+            pct = int(self._overlay_scale_var.get())
+        except (tk.TclError, ValueError):
+            return
+        if not 50 <= pct <= 300:
+            return
+        self._settings.set("text_overlay_font_scale", pct / 100.0)
+        if self._on_change is not None:
+            self._on_change()
+
+    def _on_overlay_scale(self) -> None:
+        try:
+            pct = int(self._overlay_scale_var.get())
+        except (tk.TclError, ValueError):
+            return
+        pct = max(50, min(300, pct))
+        self._overlay_scale_var.set(pct)
+        self._settings.set("text_overlay_font_scale", pct / 100.0)
+        if self._on_change is not None:
+            self._on_change()
+
+    @staticmethod
+    def _normalize_color(value) -> str:
+        """Return a valid ``#rrggbb`` string, defaulting on bad input."""
+        if isinstance(value, str) and value.startswith("#") and len(value) == 7:
+            try:
+                int(value[1:], 16)
+                return value
+            except ValueError:
+                pass
+        return "#e53935"
+
+    def _on_overlay_color(self) -> None:
+        rgb, hex_color = colorchooser.askcolor(
+            color=self._overlay_color_value,
+            parent=self,
+            title="Overlay colour",
+        )
+        if hex_color is None:
+            return
+        self._overlay_color_value = hex_color
+        self._overlay_color_swatch.config(bg=hex_color)
+        self._settings.set("text_overlay_color", hex_color)
+        if self._on_change is not None:
+            self._on_change()
+
+    def _on_overlay_opacity_edit(self, *_args) -> None:
+        """Persist opacity live while the value is in range."""
+        try:
+            pct = int(self._overlay_opacity_var.get())
+        except (tk.TclError, ValueError):
+            return
+        if not 0 <= pct <= 100:
+            return
+        self._settings.set("text_overlay_opacity", pct / 100.0)
+        if self._on_change is not None:
+            self._on_change()
+
+    def _on_overlay_opacity(self) -> None:
+        try:
+            pct = int(self._overlay_opacity_var.get())
+        except (tk.TclError, ValueError):
+            return
+        pct = max(0, min(100, pct))
+        self._overlay_opacity_var.set(pct)
+        self._settings.set("text_overlay_opacity", pct / 100.0)
         if self._on_change is not None:
             self._on_change()
 

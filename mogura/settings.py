@@ -45,6 +45,21 @@ _DEFAULTS: Dict[str, Any] = {
     # mogura.fonts.available_fonts(); "" (or an unknown value) falls back to a
     # system Japanese font.
     "text_overlay_font": "Noto Sans JP",
+    # Weight (boldness) of the overlay font. Matches a weight name from
+    # mogura.fonts.available_weights() (e.g. "Regular", "Bold"); an
+    # unavailable value falls back to a sane default for the chosen family.
+    "text_overlay_font_weight": "Regular",
+    # Multiplier applied to the rendered glyph size. 1.0 is the natural
+    # box-fitting size; larger values enlarge the glyphs (most useful for the
+    # "simplified" fixed-grid layout, where the grid pitch stays put while the
+    # characters grow). Clamped to a sensible range by the renderer.
+    "text_overlay_font_scale": 1.0,
+    # Colour of the rendered text overlay in the main window, as a "#rrggbb"
+    # hex string.
+    "text_overlay_color": "#e53935",
+    # Opacity (0..1) of the main-window text overlay. 1.0 is fully opaque; 0.0
+    # is invisible.
+    "text_overlay_opacity": 1.0,
     # How the "Draw…" button in the edit dialog lets the user hand-write a
     # character. Either:
     #   "kanjidraw" - stroke-order recognition via the optional 'kanjidraw'
