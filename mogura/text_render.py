@@ -234,7 +234,7 @@ def render_text(
         return image
 
     draw = ImageDraw.Draw(image)
-    _render_onto(draw, lines, vertical, width, height, fg, _resolve_layout(layout))
+    _render_onto(image, draw, lines, vertical, width, height, fg, _resolve_layout(layout))
     return image
 
 
@@ -259,7 +259,7 @@ def render_text_rgba(
         return image
 
     draw = ImageDraw.Draw(image)
-    _render_onto(draw, lines, vertical, width, height, fg, _resolve_layout(layout))
+    _render_onto(image, draw, lines, vertical, width, height, fg, _resolve_layout(layout))
     return image
 
 
@@ -284,13 +284,53 @@ def overlay_render_on_image(
 # A small margin inset applied once to the whole render (not per glyph).
 _MARGIN = 2
 
+# Characters that are rotated 90° clockwise when set in vertical writing.
+# In real vertical typography these are substituted with dedicated vertical
+# presentation forms (via the font's ``vert`` OpenType feature); since PIL has
+# no access to that, rotating the horizontal glyph is a close approximation.
+#
+#   * long vowel marks / dashes / hyphens / wave dashes -> become vertical bars
+#   * horizontal ellipses -> become a vertical stack of dots
+#   * paired brackets and corner quotation marks -> rotate to their vert forms
+_VERTICAL_ROTATE = set(
+    "ー"                       # KATAKANA-HIRAGANA prolonged sound mark
+    "ｰ"                       # halfwidth prolonged sound mark
+    "－‐‑‒–—―"                 # fullwidth hyphen-minus, hyphens, dashes
+    "～〜"                     # wave dashes
+    "…‥"                      # horizontal / two-dot ellipses
+    "（）｛｝〔〕［］【】〈〉《》「」『』〖〗〘〙〚〛｟｠"  # brackets / corner quotes
+)
 
-def _render_onto(draw, lines, vertical, width, height, fg, layout) -> None:
+
+def _draw_rotated_glyph(image, ch, font, cx, cy, fg) -> None:
+    """Draw ``ch`` rotated 90° clockwise, centred at ``(cx, cy)`` on ``image``.
+
+    The glyph is rendered to a transparent tile, rotated, then pasted using its
+    own alpha as the mask so it composites cleanly over whatever is beneath.
+    """
+    try:
+        bbox = font.getbbox(ch)
+    except Exception:  # noqa: BLE001
+        size = getattr(font, "size", 16)
+        bbox = (0, 0, size, size)
+    gw = max(1, bbox[2] - bbox[0])
+    gh = max(1, bbox[3] - bbox[1])
+    pad = 2
+    tile = Image.new("RGBA", (gw + 2 * pad, gh + 2 * pad), (0, 0, 0, 0))
+    td = ImageDraw.Draw(tile)
+    td.text((pad - bbox[0], pad - bbox[1]), ch, font=font, fill=fg)
+    # PIL rotates counter-clockwise for positive angles; -90 == clockwise.
+    tile = tile.rotate(-90, expand=True)
+    tw, th = tile.size
+    image.paste(tile, (int(cx - tw / 2), int(cy - th / 2)), tile)
+
+
+def _render_onto(image, draw, lines, vertical, width, height, fg, layout) -> None:
     """Dispatch to the chosen layout's drawing routine."""
     if layout == LAYOUT_DEFAULT:
         font, ascent, line_h = _fit_font_default(lines, vertical, width, height)
         if vertical:
-            _draw_vertical_default(draw, lines, font, ascent, width, height, line_h, fg)
+            _draw_vertical_default(image, draw, lines, font, ascent, width, height, line_h, fg)
         else:
             _draw_horizontal_default(draw, lines, font, ascent, width, height, line_h, fg)
         return
@@ -305,7 +345,7 @@ def _render_onto(draw, lines, vertical, width, height, fg, layout) -> None:
     cell = max(6.0, cell)
     font, ascent = _fit_font(cell)
     if vertical:
-        _draw_vertical(draw, lines, font, ascent, width, height, cell, fg)
+        _draw_vertical(image, draw, lines, font, ascent, width, height, cell, fg)
     else:
         _draw_horizontal(draw, lines, font, ascent, width, height, cell, fg)
 
@@ -345,7 +385,7 @@ def _draw_horizontal(draw, lines, font, ascent, width, height, cell, fg) -> None
             center += cell
 
 
-def _draw_vertical(draw, lines, font, ascent, width, height, cell, fg) -> None:
+def _draw_vertical(image, draw, lines, font, ascent, width, height, cell, fg) -> None:
     # Columns run right-to-left across the width (the cross-axis); spread them
     # to fill it. The first line is the rightmost column.
     avail = width - 2 * _MARGIN
@@ -356,8 +396,11 @@ def _draw_vertical(draw, lines, font, ascent, width, height, cell, fg) -> None:
         x = center - cell / 2
         cell_top = float(_MARGIN)
         for ch in line:
-            baseline = cell_top + ascent
-            draw.text((x, baseline), ch, font=font, fill=fg, anchor="ls")
+            if ch in _VERTICAL_ROTATE:
+                _draw_rotated_glyph(image, ch, font, center, cell_top + cell / 2, fg)
+            else:
+                baseline = cell_top + ascent
+                draw.text((x, baseline), ch, font=font, fill=fg, anchor="ls")
             cell_top += cell
 
 
@@ -373,7 +416,7 @@ def _draw_horizontal_default(draw, lines, font, ascent, width, height, line_h, f
         draw.text((_MARGIN, baseline), line, font=font, fill=fg, anchor="ls")
 
 
-def _draw_vertical_default(draw, lines, font, ascent, width, height, line_h, fg) -> None:
+def _draw_vertical_default(image, draw, lines, font, ascent, width, height, line_h, fg) -> None:
     # Columns run right-to-left (spread across the width); characters stack down
     # each column advancing by the font's natural line height.
     avail = width - 2 * _MARGIN
@@ -382,7 +425,10 @@ def _draw_vertical_default(draw, lines, font, ascent, width, height, line_h, fg)
         center = width - _MARGIN - (col + 0.5) * pitch
         cell_top = float(_MARGIN)
         for ch in line:
-            baseline = cell_top + ascent
-            # Center each glyph horizontally within its column slot.
-            draw.text((center, baseline), ch, font=font, fill=fg, anchor="ms")
+            if ch in _VERTICAL_ROTATE:
+                _draw_rotated_glyph(image, ch, font, center, cell_top + line_h / 2, fg)
+            else:
+                baseline = cell_top + ascent
+                # Center each glyph horizontally within its column slot.
+                draw.text((center, baseline), ch, font=font, fill=fg, anchor="ms")
             cell_top += line_h
