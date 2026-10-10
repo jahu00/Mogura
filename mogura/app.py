@@ -726,6 +726,10 @@ class MoguraApp(_TkBase):
         self._mark_dirty()
         self._update_text_counts()
         self._refresh_overlaps(page)
+        # The overlay renders text within each box, so a moved/resized box
+        # changes its layout; keep the overlay in sync.
+        if self._overlay_mode:
+            self._refresh_displayed_image()
 
     # ---------------------------------------------------------------- zoom
     def _on_zoom_changed(self, scale: float) -> None:
@@ -1137,6 +1141,9 @@ class MoguraApp(_TkBase):
 
     def _on_block_edited(self, _index: int, _content: str) -> None:
         self._mark_dirty()
+        # Keep the rendered-text overlay in step with the edited text.
+        if self._overlay_mode:
+            self._refresh_displayed_image()
 
     def _maybe_save_changes(self) -> bool:
         """If there are unsaved changes, ask to save/discard/cancel.
@@ -1492,6 +1499,8 @@ class MoguraApp(_TkBase):
             self._center.set_selected_box(index)
             self._update_text_counts()
             self._refresh_overlaps(page)
+            if self._overlay_mode:
+                self._refresh_displayed_image()
 
     def _on_combine_requested(self, indices) -> None:
         """Open the combine dialog for the checked blocks and apply the merge."""
@@ -1977,6 +1986,8 @@ class MoguraApp(_TkBase):
         if page_index == self._current_page:
             self._text_panel.refresh()
             self._text_panel.set_selected(block_index)
+            if self._overlay_mode:
+                self._refresh_displayed_image()
         # Find the following match.
         status = self.find_next(query)
         return f"Replaced 1. {status}"
