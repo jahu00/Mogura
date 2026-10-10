@@ -308,15 +308,24 @@ def _line_pitch(available: float, num_lines: int, cell: float) -> float:
 # --------------------------------------------------------------- simplified
 def _draw_horizontal(draw, lines, font, ascent, width, height, cell, fg) -> None:
     # Rows stack down the height (the cross-axis); spread them to fill it.
+    # Glyphs step along the width by a fixed ``cell`` so the row forms a true
+    # square grid (mirroring _draw_vertical) rather than flowing with the
+    # font's natural proportional advances -- that keeps the drawn width equal
+    # to ``max_len * cell``, matching the sizing assumption in _render_onto.
     avail = height - 2 * _MARGIN
     pitch = _line_pitch(avail, len(lines), cell)
     for i, line in enumerate(lines):
         # Top of this row's glyph cell, centered within its pitch slot.
         cell_top = _MARGIN + i * pitch + (pitch - cell) / 2
-        # Draw on the baseline (anchor "ls") so glyphs keep their natural
-        # vertical position within the cell instead of hugging the top.
+        # Draw on the baseline (anchor "ls" -> middle/baseline below) so glyphs
+        # keep their natural vertical position within the cell instead of
+        # hugging the top.
         baseline = cell_top + ascent
-        draw.text((_MARGIN, baseline), line, font=font, fill=fg, anchor="ls")
+        # Center of the first glyph's cell, measured from the left edge.
+        center = _MARGIN + cell / 2
+        for ch in line:
+            draw.text((center, baseline), ch, font=font, fill=fg, anchor="ms")
+            center += cell
 
 
 def _draw_vertical(draw, lines, font, ascent, width, height, cell, fg) -> None:
