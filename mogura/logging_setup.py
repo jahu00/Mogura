@@ -2,8 +2,9 @@
 
 A single :func:`configure` call wires up a console logger for the whole app.
 :func:`log_system_checks` prints a short diagnostic report at startup covering
-Python, the GUI toolkit, optional dependencies, and the OCR backends so issues
-(like a missing Tesseract binary) are obvious from the console.
+Python, the GUI toolkit, optional dependencies, the OCR backends, segmentation
+(onnxruntime + model) and the handwriting input backend so issues (like a
+missing Tesseract binary) are obvious from the console.
 
 Modules obtain a logger with :func:`get_logger` and log through it; everything
 flows to stderr via the root ``mogura`` logger configured here.
@@ -71,9 +72,9 @@ def _module_version(module_name: str) -> str | None:
 def log_system_checks(logger: logging.Logger | None = None) -> None:
     """Print a startup diagnostic report to the log.
 
-    Covers the Python runtime, the Tk toolkit, optional dependencies and the
-    availability of each OCR backend, so environment problems are visible at a
-    glance.
+    Covers the Python runtime, the Tk toolkit, optional dependencies, the
+    availability of each OCR backend, segmentation (onnxruntime + model) and the
+    handwriting input backend, so environment problems are visible at a glance.
     """
     log = logger or get_logger("startup")
 
@@ -118,5 +119,26 @@ def log_system_checks(logger: logging.Logger | None = None) -> None:
             reason = ocr.unavailable_reason(method).splitlines()[0]
             log.info("OCR backend '%s': unavailable (%s)", method, reason)
     log.info("Active OCR method: %s", ocr.get_method())
+
+    # Segmentation: onnxruntime dependency and the (large, separate) model.
+    from . import segmentation
+
+    if segmentation.is_runtime_available():
+        log.info("Segmentation runtime (onnxruntime): available")
+    else:
+        log.info("Segmentation runtime (onnxruntime): not installed")
+    log.info(
+        "Segmentation model downloaded: %s",
+        "yes" if segmentation.is_model_present() else "no",
+    )
+
+    # Handwriting input: the optional kanjidraw package.
+    from . import kanji_draw
+
+    if kanji_draw.is_available():
+        log.info("KanjiDraw backend: available")
+    else:
+        reason = kanji_draw.unavailable_reason().splitlines()[0]
+        log.info("KanjiDraw backend: unavailable (%s)", reason)
 
     log.info("=== system checks complete ===")
