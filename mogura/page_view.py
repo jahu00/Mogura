@@ -475,8 +475,16 @@ class PageView(tk.Frame):
             self._on_zoom_changed(self._scale)
 
     # ------------------------------------------------------------------ public
-    def show_image(self, image: Optional[Image.Image]) -> None:
-        """Display a new page image and fit it to the view."""
+    def show_image(
+        self, image: Optional[Image.Image], preserve_view: bool = False
+    ) -> None:
+        """Display a new page image.
+
+        By default the image is fit to the view. When ``preserve_view`` is
+        True the current zoom and pan are kept instead, which is useful when
+        swapping the base image for one of the same dimensions (e.g. toggling
+        the segmentation mask or text overlay).
+        """
         self._source_image = image
         if image is None:
             self.canvas.delete("all")
@@ -489,7 +497,10 @@ class PageView(tk.Frame):
             self._render_logo()
             return
         self._clear_logo()
-        self.fit_to_window()
+        if preserve_view and self._image_id is not None:
+            self._render()
+        else:
+            self.fit_to_window()
 
     def set_boxes(self, boxes: list) -> None:
         """Set the text bounding boxes (each ``[x1, y1, x2, y2]`` in image px)."""
@@ -607,19 +618,53 @@ class PageView(tk.Frame):
         if self._source_image is None:
             return
         iw, ih = self._source_image.size
-        disp_w = max(1, int(iw * self._scale))
-        disp_h = max(1, int(ih * self._scale))
+        scale = self._scale
 
-        resized = self._source_image.resize((disp_w, disp_h), Image.LANCZOS)
+        cw = self.canvas.winfo_width() or 1
+        ch = self.canvas.winfo_height() or 1
+
+        # Only resize the portion of the image that actually falls inside the
+        # canvas viewport. Rescaling the full image at high zoom is extremely
+        # expensive (e.g. a 1013x1440 page at 300% is ~13M pixels), yet almost
+        # all of it is off-screen. Cropping to the visible region first keeps
+        # the work bounded by the canvas size regardless of zoom level.
+        vis_x1 = max(0, int((-self._offset_x) / scale))
+        vis_y1 = max(0, int((-self._offset_y) / scale))
+        vis_x2 = min(iw, int((cw - self._offset_x) / scale) + 1)
+        vis_y2 = min(ih, int((ch - self._offset_y) / scale) + 1)
+
+        if vis_x2 <= vis_x1 or vis_y2 <= vis_y1:
+            # The image is panned entirely off-screen; hide the item.
+            if self._image_id is not None:
+                self.canvas.itemconfigure(self._image_id, state="hidden")
+            self._render_boxes()
+            if self._edit_mode:
+                self._render_handles()
+            return
+
+        crop = self._source_image.crop((vis_x1, vis_y1, vis_x2, vis_y2))
+        disp_w = max(1, int((vis_x2 - vis_x1) * scale))
+        disp_h = max(1, int((vis_y2 - vis_y1) * scale))
+
+        # LANCZOS is worth it when shrinking; when enlarging it is slow and
+        # offers little visible benefit over bilinear.
+        resample = Image.LANCZOS if scale < 1.0 else Image.BILINEAR
+        resized = crop.resize((disp_w, disp_h), resample)
         self._photo = ImageTk.PhotoImage(resized)
+
+        # Canvas position of the crop's top-left corner.
+        px = self._offset_x + vis_x1 * scale
+        py = self._offset_y + vis_y1 * scale
 
         if self._image_id is None:
             self._image_id = self.canvas.create_image(
-                self._offset_x, self._offset_y, anchor=tk.NW, image=self._photo
+                px, py, anchor=tk.NW, image=self._photo
             )
         else:
-            self.canvas.itemconfigure(self._image_id, image=self._photo)
-            self.canvas.coords(self._image_id, self._offset_x, self._offset_y)
+            self.canvas.itemconfigure(
+                self._image_id, image=self._photo, state="normal"
+            )
+            self.canvas.coords(self._image_id, px, py)
 
         self._render_boxes()
         if self._edit_mode:

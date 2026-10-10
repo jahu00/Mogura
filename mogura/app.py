@@ -559,11 +559,14 @@ class MoguraApp(_TkBase):
         self._set_toggle_active(self._overlay_btn, self._overlay_mode)
         self._refresh_displayed_image()
 
-    def _refresh_displayed_image(self) -> None:
+    def _refresh_displayed_image(self, preserve_view: bool = True) -> None:
         """Show the current page in the view, honoring the active view toggles.
 
         The base is either the page image or (in mask mode) its segmentation
         mask; the rendered-text overlay, when enabled, is composited on top.
+
+        ``preserve_view`` keeps the current zoom/pan (the default, used for
+        toggles and live updates); callers switching pages pass False to refit.
         """
         if self._current_image is None:
             return
@@ -580,7 +583,10 @@ class MoguraApp(_TkBase):
             base = self._current_image
         if self._overlay_mode:
             base = self._compose_text_overlay(base)
-        self._center.show_image(base)
+        # Preserve the current zoom/pan: toggles and live updates swap the
+        # base image for one of the same dimensions, so refitting would be
+        # jarring. Page changes pass preserve_view=False to refit.
+        self._center.show_image(base, preserve_view=preserve_view)
 
     def _compose_text_overlay(self, base):
         """Return ``base`` with each block's text rendered over its box.
@@ -1202,7 +1208,7 @@ class MoguraApp(_TkBase):
         self._current_page = index
         self._current_image = image
         if self._mask_mode or self._overlay_mode:
-            self._refresh_displayed_image()
+            self._refresh_displayed_image(preserve_view=False)
         else:
             self._center.show_image(image)
         self._page_list.set_selected(index)
