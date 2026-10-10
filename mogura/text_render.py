@@ -22,6 +22,7 @@ Callers may pass ``layout=`` explicitly; otherwise the module-level default
 from __future__ import annotations
 
 import os
+import unicodedata
 from typing import List, Optional
 
 from PIL import Image, ImageDraw, ImageFont
@@ -178,8 +179,9 @@ def _fit_font_default(lines: List[str], vertical: bool, width: float, height: fl
     em = asc + desc or 100
 
     if vertical:
-        # Columns span the width; characters stack down the height.
-        max_len = max((len(ln) for ln in lines), default=1) or 1
+        # Columns span the width; characters stack down the height. The column
+        # extent is counted in cell units (half-width glyphs count as 0.5).
+        max_len = max((_line_units(ln) for ln in lines), default=1.0) or 1.0
         point_w = (width / num_lines) * 100 / em
         point_h = (height / max_len) * 100 / em
         point = min(point_w, point_h)
@@ -302,6 +304,25 @@ _VERTICAL_ROTATE = set(
 )
 
 
+def _char_units(ch: str) -> float:
+    """Advance of ``ch`` along the writing direction, in full-cell units.
+
+    "Half" characters -- narrow Latin letters/digits/punctuation and halfwidth
+    katakana -- occupy half a cell along the writing axis (half the height in
+    vertical text, half the width in horizontal text); everything else, and any
+    glyph we rotate for vertical writing, takes a full cell.
+    """
+    if ch in _VERTICAL_ROTATE:
+        return 1.0
+    # 'H' = halfwidth, 'Na' = narrow (ASCII-width); both are half-cell glyphs.
+    return 0.5 if unicodedata.east_asian_width(ch) in ("H", "Na") else 1.0
+
+
+def _line_units(line: str) -> float:
+    """Total advance of ``line`` in full-cell units (see :func:`_char_units`)."""
+    return sum(_char_units(ch) for ch in line)
+
+
 def _draw_rotated_glyph(image, ch, font, cx, cy, fg) -> None:
     """Draw ``ch`` rotated 90° clockwise, centred at ``(cx, cy)`` on ``image``.
 
@@ -335,9 +356,10 @@ def _render_onto(image, draw, lines, vertical, width, height, fg, layout) -> Non
             _draw_horizontal_default(draw, lines, font, ascent, width, height, line_h, fg)
         return
 
-    # Simplified: fixed square cells on a grid.
+    # Simplified: fixed square cells on a grid. The main-axis extent is counted
+    # in cell units (half-width glyphs count as 0.5) rather than raw characters.
     num_lines = len(lines)
-    max_len = max((len(ln) for ln in lines), default=1) or 1
+    max_len = max((_line_units(ln) for ln in lines), default=1.0) or 1.0
     if vertical:
         cell = min(width / num_lines, height / max_len)
     else:
@@ -378,11 +400,12 @@ def _draw_horizontal(draw, lines, font, ascent, width, height, cell, fg) -> None
         # keep their natural vertical position within the cell instead of
         # hugging the top.
         baseline = cell_top + ascent
-        # Center of the first glyph's cell, measured from the left edge.
-        center = _MARGIN + cell / 2
+        # Left edge of the next glyph's cell, measured from the left margin.
+        x = float(_MARGIN)
         for ch in line:
-            draw.text((center, baseline), ch, font=font, fill=fg, anchor="ms")
-            center += cell
+            adv = cell * _char_units(ch)
+            draw.text((x + adv / 2, baseline), ch, font=font, fill=fg, anchor="ms")
+            x += adv
 
 
 def _draw_vertical(image, draw, lines, font, ascent, width, height, cell, fg) -> None:
@@ -396,12 +419,13 @@ def _draw_vertical(image, draw, lines, font, ascent, width, height, cell, fg) ->
         x = center - cell / 2
         cell_top = float(_MARGIN)
         for ch in line:
+            adv = cell * _char_units(ch)
             if ch in _VERTICAL_ROTATE:
-                _draw_rotated_glyph(image, ch, font, center, cell_top + cell / 2, fg)
+                _draw_rotated_glyph(image, ch, font, center, cell_top + adv / 2, fg)
             else:
-                baseline = cell_top + ascent
+                baseline = cell_top + adv / 2 + (ascent - cell / 2)
                 draw.text((x, baseline), ch, font=font, fill=fg, anchor="ls")
-            cell_top += cell
+            cell_top += adv
 
 
 # ------------------------------------------------------------------ default
@@ -425,10 +449,11 @@ def _draw_vertical_default(image, draw, lines, font, ascent, width, height, line
         center = width - _MARGIN - (col + 0.5) * pitch
         cell_top = float(_MARGIN)
         for ch in line:
+            adv = line_h * _char_units(ch)
             if ch in _VERTICAL_ROTATE:
-                _draw_rotated_glyph(image, ch, font, center, cell_top + line_h / 2, fg)
+                _draw_rotated_glyph(image, ch, font, center, cell_top + adv / 2, fg)
             else:
                 baseline = cell_top + ascent
                 # Center each glyph horizontally within its column slot.
                 draw.text((center, baseline), ch, font=font, fill=fg, anchor="ms")
-            cell_top += line_h
+            cell_top += adv
