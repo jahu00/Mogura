@@ -202,6 +202,24 @@ class MokuroData:
         """
         return all(not page.blocks for page in self.pages)
 
+    def pages_missing_from(self, available_names) -> List[MokuroPage]:
+        """Return mokuro pages whose image is absent from ``available_names``.
+
+        ``available_names`` is an iterable of page/image names provided by the
+        current page source (e.g. a CBZ archive). A mokuro page is considered
+        present if its ``img_path`` matches a name outright or by basename, the
+        same way :meth:`page_for` resolves lookups.
+        """
+        names = set(available_names)
+        basenames = {n.rsplit("/", 1)[-1] for n in names}
+        missing: List[MokuroPage] = []
+        for page in self.pages:
+            path = page.img_path
+            if path in names or path.rsplit("/", 1)[-1] in basenames:
+                continue
+            missing.append(page)
+        return missing
+
     def remove_page(self, img_name: str) -> bool:
         """Remove the page matching ``img_name`` and its data. Returns True
         if a page was removed."""

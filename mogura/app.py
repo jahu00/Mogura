@@ -13,6 +13,7 @@ from .cbz import CbzArchive
 from .combine_dialog import CombineDialog
 from .edit_dialog import EditBlockDialog
 from .find_dialog import FindDialog
+from .mismatch_dialog import MismatchDialog
 from .split_dialog import SplitDialog
 from .wizard_dialog import WizardDialog
 from .icons import get_icon
@@ -896,6 +897,7 @@ class MoguraApp(_TkBase):
         if self._current_page >= 0:
             self._update_text_for_page(self._current_page)
         self._update_text_counts()
+        self._check_page_mismatch()
         _log.info(
             "Loaded mokuro '%s' (%d pages)",
             mokuro.volume or os.path.basename(path),
@@ -1246,7 +1248,44 @@ class MoguraApp(_TkBase):
             text=f"Loaded embedded mokuro from CBZ "
             f"({len(mokuro.pages)} pages)"
         )
+        self._check_page_mismatch()
         return True
+
+    def _check_page_mismatch(self) -> None:
+        """Warn if the mokuro references pages absent from the image source.
+
+        Offers to drop the orphaned pages from the mokuro data (which the user
+        can then save) or to continue with the data unchanged.
+        """
+        if self._mokuro is None or self._archive is None:
+            return
+        available = [
+            self._archive.page_name(i) for i in range(self._archive.page_count)
+        ]
+        missing = self._mokuro.pages_missing_from(available)
+        if not missing:
+            return
+        _log.info("Mokuro references %d page(s) missing from source", len(missing))
+        dialog = MismatchDialog(self, missing, self._archive.page_count)
+        self.wait_window(dialog)
+        if not dialog.remove_missing:
+            self._status.config(
+                text=f"Mokuro has {len(missing)} page(s) not in the images."
+            )
+            return
+        removed = 0
+        for page in missing:
+            if self._mokuro.remove_page(page.img_path):
+                removed += 1
+        if removed:
+            self._mark_dirty()
+            if self._current_page >= 0:
+                self._update_text_for_page(self._current_page)
+            self._update_text_counts()
+        _log.info("Removed %d missing page(s) from mokuro data", removed)
+        self._status.config(
+            text=f"Removed {removed} missing page(s) from mokuro data."
+        )
 
     def _maybe_auto_load_mokuro(self, source_path: str) -> None:
         """Auto-load a sibling mokuro file if the setting is enabled."""
