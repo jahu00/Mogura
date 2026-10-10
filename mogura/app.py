@@ -73,10 +73,15 @@ class MoguraApp(_TkBase):
         self._left_visible = True
         self._right_visible = True
 
-        # When True, the center view shows the segmentation mask (white text on
-        # black) instead of the page image. Masks are cached by page name.
-        self._mask_mode = False
+        # Center-view display mode, one of:
+        #   "image"  - the original page image
+        #   "mask"   - the segmentation mask (white text on black)
+        #   "masked" - the page with non-text whitened out (mask applied)
+        # The mode also drives what OCR recognizes from. Derived images are
+        # cached per page name.
+        self._view_mode = "image"
         self._mask_cache: dict = {}
+        self._masked_cache: dict = {}
 
         # When True, an approximate render of each block's text is overlaid on
         # the page image, so the typed/OCR'd text can be compared in place.
@@ -233,12 +238,27 @@ class MoguraApp(_TkBase):
             variable=self._order_var,
             command=self._on_order_menu_toggle,
         )
-        self._mask_var = tk.BooleanVar(value=False)
-        view_menu.add_checkbutton(
-            label="Show Segmentation Mask",
-            variable=self._mask_var,
-            command=self._on_mask_menu_toggle,
+        view_menu.add_separator()
+        self._view_mode_var = tk.StringVar(value="image")
+        view_menu.add_radiobutton(
+            label="Original Image",
+            variable=self._view_mode_var,
+            value="image",
+            command=self._on_view_mode_menu,
         )
+        view_menu.add_radiobutton(
+            label="Segmentation Mask",
+            variable=self._view_mode_var,
+            value="mask",
+            command=self._on_view_mode_menu,
+        )
+        view_menu.add_radiobutton(
+            label="Masked Image",
+            variable=self._view_mode_var,
+            value="masked",
+            command=self._on_view_mode_menu,
+        )
+        view_menu.add_separator()
         self._overlay_var = tk.BooleanVar(value=False)
         view_menu.add_checkbutton(
             label="Show Rendered Text Overlay",
@@ -351,8 +371,8 @@ class MoguraApp(_TkBase):
             toolbar, "order", "①", self.toggle_order, "Toggle Text Order"
         )
         self._mask_btn = self._toolbar_button(
-            toolbar, "seg_mask", "◼", self.toggle_mask,
-            "Toggle Segmentation Mask",
+            toolbar, "seg_mask", "◼", self.cycle_view_mode,
+            "Cycle view: Original / Mask / Masked image",
         )
         self._overlay_btn = self._toolbar_button(
             toolbar, "overlay", "A", self.toggle_overlay,
@@ -377,7 +397,7 @@ class MoguraApp(_TkBase):
         self._set_toggle_active(self._text_btn, self._right_visible)
         self._set_toggle_active(self._boxes_btn, self._boxes_var.get())
         self._set_toggle_active(self._order_btn, self._order_var.get())
-        self._set_toggle_active(self._mask_btn, self._mask_var.get())
+        self._set_toggle_active(self._mask_btn, self._view_mode != "image")
         self._set_toggle_active(self._overlay_btn, self._overlay_var.get())
 
         # Zoom level indicator, docked to the far right. Clicking it toggles
@@ -444,9 +464,17 @@ class MoguraApp(_TkBase):
         self._paned.add(self._center, minsize=300, stretch="always")
         self._paned.add(self._right_panel, minsize=120, width=200)
 
-        self._status = tk.Label(self, text="No file loaded.", anchor=tk.W, bd=1,
-                                relief=tk.SUNKEN)
-        self._status.pack(side=tk.BOTTOM, fill=tk.X)
+        status_bar = tk.Frame(self)
+        status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+        self._status = tk.Label(status_bar, text="No file loaded.", anchor=tk.W,
+                                bd=1, relief=tk.SUNKEN)
+        self._status.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        # Indicator for the active center-view mode (original / mask / masked).
+        self._view_status = tk.Label(
+            status_bar, text=self._VIEW_MODE_LABELS["image"], anchor=tk.W,
+            bd=1, relief=tk.SUNKEN, width=18,
+        )
+        self._view_status.pack(side=tk.RIGHT)
 
     def _make_panel_title(self, parent: tk.Frame, text: str) -> None:
         """Add a title header bar to the top of a panel."""
@@ -518,30 +546,55 @@ class MoguraApp(_TkBase):
         self._center.set_order_visible(self._order_var.get())
         self._set_toggle_active(self._order_btn, self._order_var.get())
 
-    # ------------------------------------------------------ segmentation mask
-    def toggle_mask(self) -> None:
-        """Toggle the segmentation-mask view (from the toolbar button)."""
-        self._mask_var.set(not self._mask_var.get())
-        self._apply_mask_mode()
+    # ------------------------------------------------------ segmentation view
+    # The three center-view modes, in the order the toolbar button cycles them.
+    _VIEW_MODES = ("image", "mask", "masked")
+    _VIEW_MODE_LABELS = {
+        "image": "Original image",
+        "mask": "Segmentation mask",
+        "masked": "Masked image",
+    }
 
-    def _on_mask_menu_toggle(self) -> None:
-        """Handle the View menu checkbutton (already flipped the var)."""
-        self._apply_mask_mode()
+    def cycle_view_mode(self) -> None:
+        """Advance the center view to the next mode (from the toolbar button).
 
-    def _apply_mask_mode(self) -> None:
-        """Switch the center view between the page image and its mask."""
-        want = self._mask_var.get()
-        if want and not segmentation.is_available():
-            self._mask_var.set(False)
+        Cycles Original -> Mask -> Masked image -> Original. The two
+        segmentation modes are skipped (with a notice) when segmentation is
+        unavailable, so the button simply stays on the original image.
+        """
+        index = self._VIEW_MODES.index(self._view_mode)
+        nxt = self._VIEW_MODES[(index + 1) % len(self._VIEW_MODES)]
+        self._set_view_mode(nxt)
+
+    def _on_view_mode_menu(self) -> None:
+        """Handle the View menu radiobuttons (already set the var)."""
+        self._set_view_mode(self._view_mode_var.get())
+
+    def _set_view_mode(self, mode: str) -> None:
+        """Switch the center view to ``mode`` (one of :data:`_VIEW_MODES`)."""
+        if mode not in self._VIEW_MODES:
+            mode = "image"
+        if mode != "image" and not segmentation.is_available():
+            self._view_mode = "image"
+            self._view_mode_var.set("image")
             self._set_toggle_active(self._mask_btn, False)
             messagebox.showinfo(
                 "Segmentation unavailable",
                 segmentation.unavailable_reason(),
             )
+            self._update_view_mode_status()
             return
-        self._mask_mode = want
-        self._set_toggle_active(self._mask_btn, want)
+        self._view_mode = mode
+        self._view_mode_var.set(mode)
+        self._set_toggle_active(self._mask_btn, mode != "image")
         self._refresh_displayed_image()
+        self._update_view_mode_status()
+
+    def _update_view_mode_status(self) -> None:
+        """Show the active center-view mode in the status bar."""
+        self._view_status.config(
+            text=self._VIEW_MODE_LABELS.get(self._view_mode, "Original image")
+        )
 
     # --------------------------------------------------- rendered text overlay
     def toggle_overlay(self) -> None:
@@ -570,13 +623,14 @@ class MoguraApp(_TkBase):
         """
         if self._current_image is None:
             return
-        if self._mask_mode:
+        if self._view_mode in ("mask", "masked"):
             try:
-                base = self._mask_for_current_page()
+                base = self._segmented_for_current_page(self._view_mode)
             except Exception as exc:  # noqa: BLE001
-                self._mask_mode = False
-                self._mask_var.set(False)
+                self._view_mode = "image"
+                self._view_mode_var.set("image")
                 self._set_toggle_active(self._mask_btn, False)
+                self._update_view_mode_status()
                 messagebox.showerror("Segmentation failed", str(exc))
                 base = self._current_image
         else:
@@ -617,16 +671,26 @@ class MoguraApp(_TkBase):
             composed.alpha_composite(overlay, dest=(x1, y1))
         return composed.convert("RGB")
 
-    def _mask_for_current_page(self):
-        """Return the segmentation mask image for the current page (cached)."""
+    def _segmented_for_current_page(self, mode: str):
+        """Return the derived image for the current page (cached).
+
+        ``mode`` is "mask" (the raw segmentation mask, white text on black) or
+        "masked" (the page with everything but text whitened out).
+        """
         key = self._archive.page_name(self._current_page)
-        cached = self._mask_cache.get(key)
+        cache = self._mask_cache if mode == "mask" else self._masked_cache
+        cached = cache.get(key)
         if cached is None:
-            self._status.config(text="Computing segmentation mask...")
+            self._status.config(text="Computing segmentation...")
             self.update_idletasks()
-            cached = segmentation.mask_image(self._current_image)
-            self._mask_cache[key] = cached
-            self._status.config(text=f"Segmentation mask: {os.path.basename(key)}")
+            if mode == "mask":
+                cached = segmentation.mask_image(self._current_image)
+            else:
+                cached = segmentation.clean_crop(self._current_image)
+            cache[key] = cached
+            self._status.config(
+                text=f"Segmentation: {os.path.basename(key)}"
+            )
         return cached
 
     # ------------------------------------------------------- box move/resize
@@ -1136,8 +1200,9 @@ class MoguraApp(_TkBase):
             self._archive.close()
         self._archive = source
         self._source_path = path
-        # A new source invalidates cached segmentation masks.
+        # A new source invalidates cached segmentation results.
         self._mask_cache.clear()
+        self._masked_cache.clear()
         _log.info("Opened source with %d page(s)", source.page_count)
         # A new source invalidates any previously loaded text.
         self._mokuro = None
@@ -1207,7 +1272,7 @@ class MoguraApp(_TkBase):
         self._text_panel.commit_pending()
         self._current_page = index
         self._current_image = image
-        if self._mask_mode or self._overlay_mode:
+        if self._view_mode != "image" or self._overlay_mode:
             self._refresh_displayed_image(preserve_view=False)
         else:
             self._center.show_image(image)
@@ -1505,16 +1570,19 @@ class MoguraApp(_TkBase):
     def _use_ocr_segmentation(self) -> bool:
         """True if OCR should use the segmentation model to prepare regions.
 
-        This follows the main view's Segmentation Mask toggle: when the mask is
-        shown, OCR recognizes from segmentation-derived imagery; otherwise it
-        uses the original image.
+        This follows the center view: when a segmentation view (mask or masked
+        image) is shown, OCR recognizes from segmentation-derived imagery;
+        otherwise it uses the original image.
         """
-        return self._mask_mode and segmentation.is_available()
+        return self._view_mode in ("mask", "masked") and segmentation.is_available()
 
     def _ocr_segmentation_mode(self) -> str:
-        """How segmentation feeds OCR: "apply" (mask the image) or "mask"."""
-        mode = self._settings.get("ocr_segmentation_mode")
-        return "mask" if mode == "mask" else "apply"
+        """How segmentation feeds OCR: "apply" (mask the image) or "mask".
+
+        Driven by the active center view: the mask view OCRs the raw mask, the
+        masked-image view applies the mask to the original crop.
+        """
+        return "mask" if self._view_mode == "mask" else "apply"
 
     def _segmentation_rtl(self) -> bool:
         """Reading-order layout for detected blocks: True = right-to-left."""

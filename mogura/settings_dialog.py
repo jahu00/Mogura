@@ -147,75 +147,21 @@ class SettingsDialog(tk.Toplevel):
         combo.pack(side=tk.LEFT, padx=(6, 0))
         combo.bind("<<ComboboxSelected>>", lambda _e: self._on_ocr_method())
 
-        # How segmentation feeds OCR when the Segmentation Mask view is on.
-        ttk.Separator(parent, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(16, 10))
         tk.Label(
             parent,
-            text="When the Segmentation Mask view is enabled in the toolbar, "
-            "OCR runs on segmentation output instead of the raw page:",
-            anchor=tk.W,
-            wraplength=340,
-            justify=tk.LEFT,
-        ).pack(fill=tk.X)
-
-        self._seg_mode_var = tk.StringVar(
-            value="mask"
-            if self._settings.get("ocr_segmentation_mode") == "mask"
-            else "apply"
-        )
-        tk.Radiobutton(
-            parent,
-            text="Apply mask to the image (keep text, whiten the rest)",
-            variable=self._seg_mode_var,
-            value="apply",
-            anchor=tk.W,
-            command=self._on_seg_mode,
-        ).pack(fill=tk.X, pady=(8, 0))
-        tk.Label(
-            parent,
-            text="Best for the usual dark text on a light background. White "
-            "text on a dark background may read poorly, as it blends into the "
-            "whitened background.",
-            anchor=tk.W,
-            fg="#666666",
-            wraplength=320,
-            justify=tk.LEFT,
-        ).pack(fill=tk.X, padx=(24, 0))
-
-        tk.Radiobutton(
-            parent,
-            text="OCR the segmentation mask (white text on black)",
-            variable=self._seg_mode_var,
-            value="mask",
-            anchor=tk.W,
-            command=self._on_seg_mode,
-        ).pack(fill=tk.X, pady=(8, 0))
-        tk.Label(
-            parent,
-            text="Independent of text colour, so it copes with white-on-black "
-            "text, at the cost of dropping the original glyph detail.",
-            anchor=tk.W,
-            fg="#666666",
-            wraplength=320,
-            justify=tk.LEFT,
-        ).pack(fill=tk.X, padx=(24, 0))
-
-        tk.Label(
-            parent,
-            text="Needs the segmentation model (see the Segmentation section).",
+            text="To OCR from segmentation output instead of the raw page, "
+            "switch the center view to the Segmentation Mask or Masked Image "
+            "mode using the toolbar button.",
             anchor=tk.W,
             fg="#666666",
             wraplength=340,
             justify=tk.LEFT,
-        ).pack(fill=tk.X, pady=(10, 0))
+        ).pack(fill=tk.X, pady=(16, 0))
 
     def _on_ocr_method(self) -> None:
         method = self._ocr_method_var.get()
         self._settings.set("ocr_method", method)
         ocr.set_method(method)
-
-    def _on_seg_mode(self) -> None:
-        self._settings.set("ocr_segmentation_mode", self._seg_mode_var.get())
 
     # ------------------------------------------------- Segmentation panel
     def _build_segmentation_section(self, parent: tk.Frame) -> None:

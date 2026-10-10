@@ -152,12 +152,11 @@ class WizardDialog(tk.Toplevel):
             src, text="OCR source:", anchor=tk.W, width=16
         )
         self._src_label.pack(side=tk.LEFT)
-        if getattr(self._app, "_mask_mode", False):
-            default_src = (
-                _SRC_MASK
-                if self._app._ocr_segmentation_mode() == "mask"
-                else _SRC_SEGMENTED
-            )
+        view_mode = getattr(self._app, "_view_mode", "image")
+        if view_mode == "mask":
+            default_src = _SRC_MASK
+        elif view_mode == "masked":
+            default_src = _SRC_SEGMENTED
         else:
             default_src = _SRC_ORIGINAL
         self._src_var = tk.StringVar(value=default_src)
