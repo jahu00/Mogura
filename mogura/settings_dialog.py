@@ -395,7 +395,11 @@ class SettingsDialog(tk.Toplevel):
             command=self._on_overlap_threshold,
         )
         spin.pack(side=tk.LEFT, padx=(6, 0))
-        # Also catch typed values (the command only fires on arrow clicks).
+        # Save live as the user types, as long as the value is valid. The
+        # trace only persists valid values and does not rewrite the entry, so
+        # it never fights the user mid-edit.
+        self._overlap_var.trace_add("write", self._on_overlap_edit)
+        # Normalize/clamp (and rewrite the entry) when editing finishes.
         spin.bind("<FocusOut>", lambda _e: self._on_overlap_threshold())
         spin.bind("<Return>", lambda _e: self._on_overlap_threshold())
 
@@ -420,6 +424,23 @@ class SettingsDialog(tk.Toplevel):
             anchor=tk.W,
             command=self._on_auto_ocr,
         ).pack(fill=tk.X)
+
+    def _on_overlap_edit(self, *_args) -> None:
+        """Persist as the user types, but only when the value is valid.
+
+        Leaves the entry text untouched (no clamping/rewriting) so typing
+        isn't disrupted; out-of-range or incomplete input is simply ignored
+        until it becomes valid or editing finishes.
+        """
+        try:
+            pct = int(self._overlap_var.get())
+        except (tk.TclError, ValueError):
+            return
+        if not 0 <= pct <= 100:
+            return
+        self._settings.set("overlap_threshold", pct / 100.0)
+        if self._on_change is not None:
+            self._on_change()
 
     def _on_overlap_threshold(self) -> None:
         try:
